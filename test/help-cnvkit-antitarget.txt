@@ -1,0 +1,20 @@
+usage: cnvkit.py antitarget [-h] [-g FILENAME] [-a AVG_SIZE] [-m MIN_SIZE]
+                            [-o FILENAME]
+                            targets
+
+positional arguments:
+  targets               BED or interval file listing the targeted regions.
+
+options:
+  -h, --help            show this help message and exit
+  -g FILENAME, --access FILENAME
+                        Regions of accessible sequence on chromosomes (.bed),
+                        as output by genome2access.py.
+  -a AVG_SIZE, --avg-size AVG_SIZE
+                        Average size of antitarget bins (results are
+                        approximate). [Default: 150000]
+  -m MIN_SIZE, --min-size MIN_SIZE
+                        Minimum size of antitarget bins (smaller regions are
+                        dropped). [Default: 1/16 avg size, calculated]
+  -o FILENAME, --output FILENAME
+                        Output file name.
