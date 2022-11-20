@@ -41,7 +41,8 @@ def parse_doc(doc):
     # it's a dict (with stable ordering, so positional args are not scrambled)
     try:
         args = docopt.docopt(doc)
-    except docopt.DocoptExit:
+    except (docopt.DocoptExit, docopt.DocoptLanguageError) as why:
+        print("Warning: didn't parse all arguments:", type(why).__name__, file=sys.stderr)
         args = None
     if isinstance(args, dict):
         # If docopt() worked, then remove the `opts` short and long keys from
@@ -110,7 +111,11 @@ def transform(usage, positionals, options):
         #               # default value if given in help text, or None if not given
         #               # / there isn't one.
         option_flag = opt.long or opt.short
-        if option_flag in ("--output", "-o") and opt.argcount == 1:
+        if opt.long in ("--help", "-help", "--version", "-version") and opt.argcount == 0:
+            # No help or version options in the WDL task; you'd use meta{} instead
+            continue
+        elif opt.long in ("--output", "-output") and opt.argcount == 1:
+            # This variable will also be used in the WDL task's `output` section
             name = "output_file_name"
             has_output_file = True
         else:
@@ -144,6 +149,10 @@ def type_and_default(value):
         # -> no default value to apply here; treat the argument as optional instead
         wdl_type = "String"
         default = None
+    except ValueError:
+        # Default is a valid token, but not a number or other literal -> string'll do
+        wdl_type = "String"
+        default = str(value)
     else:
         default = str(value)
         wdl_type = (
@@ -177,19 +186,12 @@ def render(title, cli_prefix, cli_args):
 
 
 if __name__ == '__main__':
-    from pprint import pprint
-
     with open(sys.argv[1]) as inf:
         #args = docopt.docopt(inf.read())
         doc = inf.read()
     usage, positionals, options = parse_doc(doc)
-    print("\n\nParsed CLI usage:\n", file=sys.stderr)
-    pprint(usage, stream=sys.stderr)
-    print("\n\nParsed CLI positionals:\n", file=sys.stderr)
-    pprint(positionals, stream=sys.stderr)
-    print("\n\nParsed CLI options:\n", file=sys.stderr)
-    pprint(options, stream=sys.stderr)
-
+    print(f"Parsed {len(positionals)} positional and {len(options)} optional CLI arguments.",
+          file=sys.stderr)
     title, cli_prefix, cli_args, has_output_file = transform(usage, positionals, options)
     out_wdl = render(title, cli_prefix, cli_args)
     print(out_wdl)
