@@ -82,7 +82,7 @@ def transform(usage, positionals, options):
               output.
 
     """
-    cli_prefix = usage[:usage.find('[')]
+    cli_prefix = usage[:usage.find(' [')].rstrip()
     title = (cli_prefix
                 .replace(".py", "")
                 .title()
