@@ -28,8 +28,7 @@ task {{ title }} {
 
   output {
     {% if has_output_file %}
-      # ENH: fall back to stdout if output_file_name not defined
-      File? output_file = "$output_file_name"
+      File output_file = if defined(output_file_name) then "$output_file_name" else stdout()
     {% else %}
       File output_file = stdout()
     {% endif %}

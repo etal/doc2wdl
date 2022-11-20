@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
 """
-import ast
 import sys
+from ast import literal_eval
 from dataclasses import dataclass
 
 import docopt
 import jinja2
 
+RESERVED_WDL_NAMES = set("""
+scatter
+""".split())
 
 @dataclass
 class Argument:
@@ -20,7 +23,6 @@ class Argument:
     option_flag: str = ""
     option_has_value: bool = False
     doc: str = ""
-
 
 
 
@@ -114,13 +116,16 @@ def transform(usage, positionals, options):
         if opt.long in ("--help", "-help", "--version", "-version") and opt.argcount == 0:
             # No help or version options in the WDL task; you'd use meta{} instead
             continue
-        elif opt.long in ("--output", "-output") and opt.argcount == 1:
+        if opt.long in ("--output", "-output") and opt.argcount == 1:
             # This variable will also be used in the WDL task's `output` section
             name = "output_file_name"
             has_output_file = True
         else:
             name = (option_flag.lstrip('-').replace('-', '_')
                     .replace('.', '_').replace('[', '').replace(']', ''))
+            # Avoid names that are reserved WDL keywords, e.g. 'scatter'
+            if name in RESERVED_WDL_NAMES:
+                name += "_"
         arg = Argument(
             name=name,
             wdl_type="String",
@@ -133,17 +138,23 @@ def transform(usage, positionals, options):
         if opt.value is not None and opt.argcount == 1:
             wdl_type, default = type_and_default(opt.value)
             if default is not None:
-                arg.default_value = str(default)
+                if isinstance(default, str):
+                    arg.default_value = f'"{default}"'
+                else:
+                    arg.default_value = str(default)
                 arg.is_required = True  # Otherwise redundant / undefined behavior
                 arg.wdl_type = wdl_type
         cli_args.append(arg)
 
-    return title, cli_prefix, cli_args, has_output_file
+    return dict(title=title,
+                cli_prefix=cli_prefix,
+                cli_args=cli_args,
+                has_output_file=has_output_file)
 
 
 def type_and_default(value):
     try:
-        value = ast.literal_eval(value)
+        value = literal_eval(value)
     except SyntaxError:
         # The default is probably calculated by the command
         # -> no default value to apply here; treat the argument as optional instead
@@ -163,12 +174,11 @@ def type_and_default(value):
     return wdl_type, default
 
 
-def render(title, cli_prefix, cli_args):
+def render(template_kwargs):
     """Render the WDL task template with the given values.
 
     Args:
-        cli_prefix: str
-        cli_args: str
+        template_kwargs: dict
 
     Return:
         out_wdl: str
@@ -180,7 +190,7 @@ def render(title, cli_prefix, cli_args):
         lstrip_blocks=True, trim_blocks=True
     )
     template = env.get_template("task_template.wdl")
-    out_wdl = template.render(title=title, cli_prefix=cli_prefix, cli_args=cli_args)
+    out_wdl = template.render(**template_kwargs)
     return out_wdl
 
 
@@ -192,6 +202,5 @@ if __name__ == '__main__':
     usage, positionals, options = parse_doc(doc)
     print(f"Parsed {len(positionals)} positional and {len(options)} optional CLI arguments.",
           file=sys.stderr)
-    title, cli_prefix, cli_args, has_output_file = transform(usage, positionals, options)
-    out_wdl = render(title, cli_prefix, cli_args)
+    out_wdl = render(transform(usage, positionals, options))
     print(out_wdl)
