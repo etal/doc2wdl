@@ -138,15 +138,13 @@ def transform(usage, positionals, options):
         if opt.value is not None and opt.argcount == 1:
             wdl_type, default = type_and_default(opt.value)
             if default is not None:
-                if isinstance(default, str):
-                    arg.default_value = f'"{default}"'
-                else:
-                    arg.default_value = str(default)
                 arg.is_required = True  # Otherwise redundant / undefined behavior
+                arg.default_value = default
                 arg.wdl_type = wdl_type
         cli_args.append(arg)
 
     return dict(title=title,
+                usage="\n".join(["# " + line for line in usage.splitlines()]),
                 cli_prefix=cli_prefix,
                 cli_args=cli_args,
                 has_output_file=has_output_file)
@@ -163,7 +161,7 @@ def type_and_default(value):
     except ValueError:
         # Default is a valid token, but not a number or other literal -> string'll do
         wdl_type = "String"
-        default = str(value)
+        default = f'"{value}"'
     else:
         default = str(value)
         wdl_type = (

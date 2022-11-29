@@ -1,5 +1,7 @@
 version 1.1
 
+{{ usage }}
+
 task {{ title }} {
   input {
     {% for arg in cli_args %}
@@ -15,12 +17,12 @@ task {{ title }} {
   command <<<
     {{ cli_prefix }} \
     {% for arg in cli_args %}
-      {% if arg.is_required %}
-        {{ "~{" }}{{ arg.name }}{{ "}" }} \
-      {% elif arg.option_has_value %}
-        ~{"{{ arg.option_flag }}" + {{ arg.name }}} \
-      {% else %}
+      {% if arg.option_has_value %}
+        ~{"{{ arg.option_flag }} " + {{ arg.name }}} \
+      {% elif arg.option_flag is not none %}
         ~{if defined({{ arg.name }}) then "{{ arg.option_flag }}" else ""} \
+      {% else %}
+        {{ "~{" }}{{ arg.name }}{{ "}" }} \
       {% endif %}
     {% endfor %}
 
