@@ -8,7 +8,8 @@
 # AP._actions
 import argparse
 
-import doc2wdl
+from .wdlgen import *
+
 
 def unpack_tasks(arg_parser, prog):
     """Extract WDL "task" values from an ArgumentParser.
@@ -54,7 +55,7 @@ def unpack_tasks(arg_parser, prog):
 
         if isinstance(action, (argparse._StoreAction, argparse._StoreTrueAction)):
             # _StoreTrueAction = _StoreAction where const=True, default=False, nargs=0
-            arg = doc2wdl.Argument(
+            arg = Argument(
                 name=action.dest,
                 wdl_type=(
                     "Boolean" if action.type is bool or isinstance(action.default, bool)
@@ -79,6 +80,6 @@ def unpack_tasks(arg_parser, prog):
 
 def main(arg_parser, prog):
     for i, task in enumerate(unpack_tasks(arg_parser, prog)):
-        out_wdl = doc2wdl.render(task)
+        out_wdl = render(task)
         with open(f"{out_wdl['title']}-{i}.task.wdl", "w", encoding="utf-8") as outfile:
             outfile.write(out_wdl)
