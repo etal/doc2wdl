@@ -16,7 +16,7 @@ cnvkit-antitarget.wdl-check.txt samtools-view.wdl-check.txt: \
 
 cnvkit-antitarget.task.wdl samtools-view.task.wdl: \
 	%.task.wdl: help-%.txt
-	cd .. && ./doc2wdl.py test/$< > test/$@ && cd -
+	cd .. && scripts/doc2wdl.py test/$< > test/$@ && cd -
 
 help-samtools-view.txt:
 	samtools help view > $@
