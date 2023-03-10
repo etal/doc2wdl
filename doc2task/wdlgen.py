@@ -1,24 +1,10 @@
-"""Main module."""
-from dataclasses import dataclass
-
+"""WDL serialization from the task object model."""
 import jinja2
 
 
 RESERVED_WDL_NAMES = set("""
 scatter
 """.split())
-
-@dataclass
-class Argument:
-    """A command argument for a WDL task."""
-    name: str
-    wdl_type: str
-    is_array: bool = False
-    is_required: bool = False
-    default_value: str | None = None
-    option_flag: str = ""
-    option_has_value: bool = False
-    doc: str = ""
 
 
 def render(template_kwargs):

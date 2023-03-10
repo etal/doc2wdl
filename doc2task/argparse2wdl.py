@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 """Take a populated ArgumentParser, unpack it, and generate a WDL task."""
 
 # Of interest:
@@ -8,7 +7,8 @@
 # AP._actions
 import argparse
 
-from .wdlgen import *
+from .tasktree import Argument
+from .wdlgen import render
 
 
 def unpack_tasks(arg_parser, prog):

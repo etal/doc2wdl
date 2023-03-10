@@ -5,8 +5,8 @@ from ast import literal_eval
 
 import docopt
 
-from .wdlgen import *
-
+from .tasktree import Argument
+from .wdlgen import RESERVED_WDL_NAMES
 
 
 def parse_doc(doc):
