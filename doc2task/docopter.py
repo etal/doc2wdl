@@ -1,15 +1,14 @@
 """
 """
 import sys
-from ast import literal_eval
 
 import docopt
 
+from . import wdlgen
 from .tasktree import Argument
-from .wdlgen import RESERVED_WDL_NAMES
 
 
-def parse_doc(doc):
+def parse(doc):
     """Parse the given help text into data structures."""
     usage = docopt.printable_usage(doc).split(None, 1)[1]
 
@@ -107,7 +106,7 @@ def transform(usage, positionals, options):
             name = (option_flag.lstrip('-').replace('-', '_')
                     .replace('.', '_').replace('[', '').replace(']', ''))
             # Avoid names that are reserved WDL keywords, e.g. 'scatter'
-            if name in RESERVED_WDL_NAMES:
+            if name in wdlgen.RESERVED_WDL_NAMES:
                 name += "_"
         arg = Argument(
             name=name,
@@ -119,7 +118,7 @@ def transform(usage, positionals, options):
             #doc="",
         )
         if opt.value is not None and opt.argcount == 1:
-            wdl_type, default = type_and_default(opt.value)
+            wdl_type, default = wdlgen.type_and_default(opt.value)
             if default is not None:
                 arg.is_required = True  # Otherwise redundant / undefined behavior
                 arg.default_value = default
@@ -131,27 +130,4 @@ def transform(usage, positionals, options):
                 cli_prefix=cli_prefix,
                 cli_args=cli_args,
                 has_output_file=has_output_file)
-
-
-def type_and_default(value):
-    try:
-        value = literal_eval(value)
-    except SyntaxError:
-        # The default is probably calculated by the command
-        # -> no default value to apply here; treat the argument as optional instead
-        wdl_type = "String"
-        default = None
-    except ValueError:
-        # Default is a valid token, but not a number or other literal -> string'll do
-        wdl_type = "String"
-        default = f'"{value}"'
-    else:
-        default = str(value)
-        wdl_type = (
-                "Boolean" if isinstance(value, bool) else
-                "Int" if isinstance(value, int) else
-                "Float" if isinstance(value, float) else
-                "String")
-    return wdl_type, default
-
 
