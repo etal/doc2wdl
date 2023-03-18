@@ -1,5 +1,4 @@
-"""
-"""
+"""Parse a CLI tool's help text to populate the task object model."""
 import sys
 
 import docopt
@@ -26,7 +25,9 @@ def parse(doc):
     try:
         args = docopt.docopt(doc)
     except (docopt.DocoptExit, docopt.DocoptLanguageError) as why:
-        print("Warning: didn't parse all arguments:", type(why).__name__, file=sys.stderr)
+        print(
+            "Warning: didn't parse all arguments:", type(why).__name__, file=sys.stderr
+        )
         args = None
     if isinstance(args, dict):
         # If docopt() worked, then remove the `opts` short and long keys from
@@ -66,26 +67,27 @@ def transform(usage, positionals, options):
               output.
 
     """
-    cli_prefix = usage[:usage.find(' [')].rstrip()
-    title = (cli_prefix
-                .replace(".py", "")
-                .title()
-                .replace(' ', '')
-                .replace('-', ''))
+    cli_prefix = usage[: usage.find(" [")].rstrip()
+    title = cli_prefix.replace(".py", "").title().replace(" ", "").replace("-", "")
 
     cli_args = []
     for token in positionals:
         # Just the keys -- no option prefix
-        cli_args.append(Argument(
-            name=token.strip("<>").replace('.', '_').replace('[', '').replace(']', ''),
-            wdl_type="File",
-            #is_array=False,
-            is_required=True,
-            #default_value=None,
-            #option_flag="",
-            #option_has_value=
-            #doc="",
-        ))
+        cli_args.append(
+            Argument(
+                name=token.strip("<>")
+                .replace(".", "_")
+                .replace("[", "")
+                .replace("]", ""),
+                wdl_type="File",
+                # is_array=False,
+                is_required=True,
+                # default_value=None,
+                # option_flag="",
+                # option_has_value=
+                # doc="",
+            )
+        )
 
     has_output_file = False
     for opt in options:
@@ -95,7 +97,10 @@ def transform(usage, positionals, options):
         #               # default value if given in help text, or None if not given
         #               # / there isn't one.
         option_flag = opt.long or opt.short
-        if opt.long in ("--help", "-help", "--version", "-version") and opt.argcount == 0:
+        if (
+            opt.long in ("--help", "-help", "--version", "-version")
+            and opt.argcount == 0
+        ):
             # No help or version options in the WDL task; you'd use meta{} instead
             continue
         if opt.long in ("--output", "-output") and opt.argcount == 1:
@@ -103,19 +108,24 @@ def transform(usage, positionals, options):
             name = "output_file_name"
             has_output_file = True
         else:
-            name = (option_flag.lstrip('-').replace('-', '_')
-                    .replace('.', '_').replace('[', '').replace(']', ''))
+            name = (
+                option_flag.lstrip("-")
+                .replace("-", "_")
+                .replace(".", "_")
+                .replace("[", "")
+                .replace("]", "")
+            )
             # Avoid names that are reserved WDL keywords, e.g. 'scatter'
             if name in wdlgen.RESERVED_WDL_NAMES:
                 name += "_"
         arg = Argument(
             name=name,
             wdl_type="String",
-            #is_array=False,
+            # is_array=False,
             is_required=False,
             option_flag=option_flag,
             option_has_value=(opt.argcount == 1),
-            #doc="",
+            # doc="",
         )
         if opt.value is not None and opt.argcount == 1:
             wdl_type, default = wdlgen.type_and_default(opt.value)
@@ -125,9 +135,10 @@ def transform(usage, positionals, options):
                 arg.wdl_type = wdl_type
         cli_args.append(arg)
 
-    return dict(title=title,
-                usage="\n".join(["# " + line for line in usage.splitlines()]),
-                cli_prefix=cli_prefix,
-                cli_args=cli_args,
-                has_output_file=has_output_file)
-
+    return dict(
+        title=title,
+        usage="\n".join(["# " + line for line in usage.splitlines()]),
+        cli_prefix=cli_prefix,
+        cli_args=cli_args,
+        has_output_file=has_output_file,
+    )

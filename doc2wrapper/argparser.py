@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Take a populated ArgumentParser, unpack it, and generate a WDL task."""
-
+"""Take a populated ArgumentParser, unpack it, and populate the task object model."""
 # Of interest:
 # AP.description
 # AP.epilog
@@ -9,6 +8,13 @@ import argparse
 
 from .tasktree import Argument
 from .wdlgen import render
+
+
+def parse(arg_parser, prog):
+    for i, task in enumerate(unpack_tasks(arg_parser, prog)):
+        out_wdl = render(task)
+        with open(f"{out_wdl['title']}-{i}.task.wdl", "w", encoding="utf-8") as outfile:
+            outfile.write(out_wdl)
 
 
 def unpack_tasks(arg_parser, prog):
@@ -35,15 +41,12 @@ def unpack_tasks(arg_parser, prog):
     Output: iterable of template-ready kwarg dictionaries.
     """
     task_kwargs = {
-            "title": (prog
-                .replace(".py", "")
-                .title()
-                .replace(' ', '')
-                .replace('-', '')),
-            "usage": " ".join([arg_parser.description or "", arg_parser.epilog or ""]),
-            "cli_prefix": prog,
-            "cli_args": [],
-            "has_output_file": False}
+        "title": (prog.replace(".py", "").title().replace(" ", "").replace("-", "")),
+        "usage": " ".join([arg_parser.description or "", arg_parser.epilog or ""]),
+        "cli_prefix": prog,
+        "cli_args": [],
+        "has_output_file": False,
+    }
     for action in arg_parser._actions:
         if isinstance(action, argparse._HelpAction):
             continue
@@ -58,28 +61,25 @@ def unpack_tasks(arg_parser, prog):
             arg = Argument(
                 name=action.dest,
                 wdl_type=(
-                    "Boolean" if action.type is bool or isinstance(action.default, bool)
+                    "Boolean"
+                    if action.type is bool or isinstance(action.default, bool)
                     # XXX or action.const is not None?
-                    else
-                    "Int" if action.type is int or isinstance(action.default, int) else
-                    "Float" if action.type is float or isinstance(action.default, float) else
-                    "String"),
+                    else "Int"
+                    if action.type is int or isinstance(action.default, int)
+                    else "Float"
+                    if action.type is float or isinstance(action.default, float)
+                    else "String"
+                ),
                 is_array=(action.nargs in (0, 1, "?")),
                 is_required=action.required,
                 default_value=action.default,
                 option_flag=action.option_strings[-1] if action.option_strings else "",
                 option_has_value=action.nargs != 0,
                 doc=action.help or "",
-                )
+            )
             task_kwargs["cli_args"].append(arg)
         else:
             raise TypeError(f"What is this? {action} :: {type(action)}")
 
     if task_kwargs["cli_args"]:
         yield task_kwargs
-
-def main(arg_parser, prog):
-    for i, task in enumerate(unpack_tasks(arg_parser, prog)):
-        out_wdl = render(task)
-        with open(f"{out_wdl['title']}-{i}.task.wdl", "w", encoding="utf-8") as outfile:
-            outfile.write(out_wdl)
