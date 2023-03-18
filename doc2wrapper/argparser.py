@@ -10,13 +10,6 @@ from .tasktree import Argument
 from .wdlgen import render
 
 
-def parse(arg_parser, prog):
-    for i, task in enumerate(unpack_tasks(arg_parser, prog)):
-        out_wdl = render(task)
-        with open(f"{out_wdl['title']}-{i}.task.wdl", "w", encoding="utf-8") as outfile:
-            outfile.write(out_wdl)
-
-
 def unpack_tasks(arg_parser, prog):
     """Extract WDL "task" values from an ArgumentParser.
 
@@ -52,11 +45,20 @@ def unpack_tasks(arg_parser, prog):
             continue
 
         if isinstance(action, argparse._SubParsersAction):
-            for cmd_name, sub_ap in action.choices:
+            for cmd_name, sub_ap in action.choices.items():
                 yield from unpack_tasks(sub_ap, f"{prog} {cmd_name}")
             continue
 
-        if isinstance(action, (argparse._StoreAction, argparse._StoreTrueAction)):
+        if isinstance(
+            action,
+            (
+                argparse._StoreAction,
+                argparse._StoreTrueAction,
+                argparse._StoreFalseAction,
+                argparse._AppendAction,
+                argparse._AppendConstAction,
+            ),
+        ):
             # _StoreTrueAction = _StoreAction where const=True, default=False, nargs=0
             arg = Argument(
                 name=action.dest,
