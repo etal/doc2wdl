@@ -17,10 +17,25 @@ Usage
     # Capture the help text from a tool
     mycommand --help > mycommand-help.txt
     # Generate a draft WDL task
-    doc2wdl.py mycommand-help.txt > mycommand.task.wdl
+    doc2wrapper docopt -f mycommand-help.txt -o mycommand.task.wdl
+    # In one shot
+    cat example-help.txt | doc2wrapper docopt > example.task.wdl
+
+    # Python-specific introspection
+    doc2wrapper argparse -m cnvlib.commands -p AP -o example.wdl
+
 
 The generated WDL will very likely need further editing to work well, but hopefully this
 approach will save you some time over writing each task from scratch.
+
+
+Conceptual flow
+---------------
+
+- Readers (docopt, argparse) parse the given doc, transform contents, and populate the
+  object model in memory.
+- Writers (WDL, Nextflow) take the populated object model and use the static jinja2
+  template to generate a string document.
 
 
 Known issues
