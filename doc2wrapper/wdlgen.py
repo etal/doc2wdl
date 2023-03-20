@@ -4,9 +4,11 @@ from ast import literal_eval
 import jinja2
 
 
-RESERVED_WDL_NAMES = set("""
+RESERVED_WDL_NAMES = set(
+    """
 scatter
-""".split())
+""".split()
+)
 
 
 def render(template_kwargs):
@@ -19,17 +21,20 @@ def render(template_kwargs):
         out_wdl: str
     """
     env = jinja2.Environment(
-        #loader=jinja2.PackageLoader("doc2task"),
+        # loader=jinja2.PackageLoader("doc2wrapper"),
         loader=jinja2.FileSystemLoader("."),
         autoescape=jinja2.select_autoescape(),
-        lstrip_blocks=True, trim_blocks=True
+        lstrip_blocks=True,
+        trim_blocks=True,
     )
-    template = env.get_template("doc2task/task_template.wdl")
+    template = env.get_template("doc2wrapper/task_template.wdl")
     out_wdl = template.render(**template_kwargs)
     return out_wdl
 
 
 def type_and_default(value):
+    """Infer value's data type and serialization for use as a WDL declaration."""
+
     try:
         value = literal_eval(value)
     except SyntaxError:
@@ -44,8 +49,12 @@ def type_and_default(value):
     else:
         default = str(value)
         wdl_type = (
-                "Boolean" if isinstance(value, bool) else
-                "Int" if isinstance(value, int) else
-                "Float" if isinstance(value, float) else
-                "String")
+            "Boolean"
+            if isinstance(value, bool)
+            else "Int"
+            if isinstance(value, int)
+            else "Float"
+            if isinstance(value, float)
+            else "String"
+        )
     return wdl_type, default
