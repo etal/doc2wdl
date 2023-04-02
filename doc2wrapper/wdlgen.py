@@ -4,11 +4,9 @@ from ast import literal_eval
 import jinja2
 
 
-RESERVED_WDL_NAMES = set(
-    """
+RESERVED_WDL_NAMES = """
 scatter
 """.split()
-)
 
 
 def render(template_kwargs):
@@ -21,13 +19,12 @@ def render(template_kwargs):
         out_wdl: str
     """
     env = jinja2.Environment(
-        # loader=jinja2.PackageLoader("doc2wrapper"),
-        loader=jinja2.FileSystemLoader("."),
+        loader=jinja2.PackageLoader("doc2wrapper"),
         autoescape=jinja2.select_autoescape(),
         lstrip_blocks=True,
         trim_blocks=True,
     )
-    template = env.get_template("doc2wrapper/task_template.wdl")
+    template = env.get_template("task_template.wdl")
     out_wdl = template.render(**template_kwargs)
     return out_wdl
 

@@ -1,4 +1,3 @@
-thisdir := "tests/example"
 
 all: help-cnvkit-antitarget.txt help-samtools-view.txt
 
@@ -20,11 +19,11 @@ cnvkit-antitarget.wdl-check.txt cnvkit-antitarget-argparse.wdl-check.txt samtool
 
 cnvkit-antitarget.task.wdl samtools-view.task.wdl: \
 	%.task.wdl: help-%.txt
-	cd ../.. && doc2wrapper docopt -f $(thisdir)/$< -o $(thisdir)/$@ && cd -
+	doc2wrapper docopt -f $< -o $@
 
 
 cnvkit-antitarget-argparse.task.wdl:
-	cd ../.. && doc2wrapper argparse -m cnvlib.commands -p AP -o $(thisdir)/$@ && cd -
+	doc2wrapper argparse -m cnvlib.commands -p AP -o $@
 
 
 help-samtools-view.txt:
