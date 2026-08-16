@@ -53,7 +53,9 @@ def main():
     sp_docopt.set_defaults(func=cmd_docopt)
 
     args = aparser.parse_args()
-    args.func(args)
+    # setuptools uses this as the process exit status, so a subcommand that
+    # could not generate anything must be able to report failure.
+    return args.func(args)
 
 
 def cmd_argparse(args):
@@ -74,7 +76,14 @@ def cmd_argparse(args):
 def cmd_docopt(args):
     """Console script for subcommand 'docopt'."""
     doc = args.filename.read()
-    usage, positionals, options = docopter.parse(doc)
+    try:
+        usage, positionals, options = docopter.parse(doc)
+    except docopter.UsageNotFound as why:
+        print(
+            f"Cannot read a command line from this help text: {why}",
+            file=sys.stderr,
+        )
+        return 1
     print(
         f"Parsed {len(positionals)} positional and {len(options)} optional CLI arguments.",
         file=sys.stderr,

@@ -22,12 +22,12 @@ process {{ title }} {
       """
       {{ cli_prefix }} \
       {% for arg in cli_args %}
-        {% if arg.option_has_value %}
+        {% if arg.is_positional %}
+          ${{ '{' }}{{ arg.name }}{{ '}' }} \
+        {% elif arg.option_has_value %}
           ${"{{ arg.option_flag }} " + {{ arg.name }}} \
-        {% elif arg.option_flag is not none %}
-          ${if defined({{ arg.name }}) then "{{ arg.option_flag }}" else ""} \
         {% else %}
-          {{ "${" }}{{ arg.name }}{{ "}" }} \
+          ${if defined({{ arg.name }}) then "{{ arg.option_flag }}" else ""} \
         {% endif %}
       {% endfor %}
       """

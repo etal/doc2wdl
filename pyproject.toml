@@ -44,13 +44,19 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = ["doc2wrapper"]
 
+[tool.setuptools.package-data]
+# Without this the Jinja2 templates are left out of the wheel and PackageLoader
+# fails at run time; a build in a tree with a stale egg-info picks them up anyway,
+# so only a clean-room install proves it.
+doc2wrapper = ["templates/*"]
+
 [tool.setuptools.dynamic]
 version = {attr = "doc2wrapper._version.__version__"}
 dependencies = {file = "requirements.txt"}
 optional-dependencies = {test = {file = "requirements-dev.txt"}}
 
 [tool.pytest.ini_options]
-testpaths = ["test"]
+testpaths = ["tests"]
 filterwarnings = ["error"]
 
 [tool.coverage.run]
@@ -82,7 +88,8 @@ warn_unused_ignores = true
 #warn_unreachable = true
 
 [[tool.mypy.overrides]]
+# Vendored third-party code: checked for import resolution, not for style.
 module = [
-    "docopt.*",
+    "doc2wrapper._docopt",
 ]
-ignore_missing_imports = true
+ignore_errors = true

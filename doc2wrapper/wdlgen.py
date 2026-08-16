@@ -1,8 +1,7 @@
 """WDL serialization from the task object model."""
-from ast import literal_eval
-
 import jinja2
 
+from .tasktree import rename_reserved
 
 RESERVED_WDL_NAMES = """
 scatter
@@ -20,38 +19,21 @@ def render(template_kwargs):
     """
     env = jinja2.Environment(
         loader=jinja2.PackageLoader("doc2wrapper"),
-        autoescape=jinja2.select_autoescape(),
+        # Pinned off rather than fixed: select_autoescape() already resolves to
+        # False for these extensions, so this preserves behaviour. It guards the
+        # case where a template is renamed or loaded from a string and silently
+        # starts turning the `&`, `<` and `>` of captured help text into entities.
+        autoescape=False,
         lstrip_blocks=True,
         trim_blocks=True,
     )
     template = env.get_template("task_template.wdl")
-    out_wdl = template.render(**template_kwargs)
+    out_wdl = template.render(
+        **{
+            **template_kwargs,
+            "cli_args": rename_reserved(
+                template_kwargs["cli_args"], RESERVED_WDL_NAMES
+            ),
+        }
+    )
     return out_wdl
-
-
-def type_and_default(value):
-    """Infer value's data type and serialization for use as a WDL declaration."""
-
-    try:
-        value = literal_eval(value)
-    except SyntaxError:
-        # The default is probably calculated by the command
-        # -> no default value to apply here; treat the argument as optional instead
-        wdl_type = "String"
-        default = None
-    except ValueError:
-        # Default is a valid token, but not a number or other literal -> string'll do
-        wdl_type = "String"
-        default = f'"{value}"'
-    else:
-        default = str(value)
-        wdl_type = (
-            "Boolean"
-            if isinstance(value, bool)
-            else "Int"
-            if isinstance(value, int)
-            else "Float"
-            if isinstance(value, float)
-            else "String"
-        )
-    return wdl_type, default

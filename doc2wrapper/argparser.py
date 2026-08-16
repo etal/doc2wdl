@@ -7,7 +7,6 @@
 import argparse
 
 from .tasktree import Argument
-from .wdlgen import render
 
 
 def unpack_tasks(arg_parser, prog):
