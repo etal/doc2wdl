@@ -12,3 +12,22 @@ dist/
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# Per-tool agent harness state. Each harness drops its own configuration into
+# the checkout, and the generators recreate it on demand -- bd setup codex and
+# bd setup cursor write .codex/ and .cursor/ from scratch -- so keep it out of
+# the tree rather than advertising support this project never exercises.
+# Anchored to the root: a directory named .claude/ deeper in the tree would be
+# something else, and should be noticed rather than silently ignored.  Contrast
+# .dolt/ above, which is deliberately unanchored because beads keeps a real one
+# at .beads/embeddeddolt/.
+#
+# The sibling directories .omp/, .beads/ and .agents/ are excluded from
+# .git/info/exclude instead, because init-project.sh registers them there in the
+# same step that creates them.  The harnesses below register nothing, so leaving
+# them to a local exclude file would hand every contributor a dirty git status
+# to clean up by hand.
+/.claude/
+/.codex/
+/.cursor/
+/.serena/
