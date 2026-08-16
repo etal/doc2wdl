@@ -43,7 +43,12 @@ def unpack_tasks(arg_parser, prog):
         "has_output_file": False,
     }
     for action in arg_parser._actions:
-        if isinstance(action, argparse._HelpAction):
+        # `--help` and `--version` describe the tool itself rather than one of its
+        # inputs, which is the same rule the docopt reader applies through
+        # `_SKIPPED_OPTIONS`.  It is spelled here in the vocabulary this reader has --
+        # the action class -- rather than shared as a list of flag spellings, because
+        # a live parser states the intent and does not have to guess it from a name.
+        if isinstance(action, (argparse._HelpAction, argparse._VersionAction)):
             continue
 
         if isinstance(action, argparse._SubParsersAction):
@@ -55,13 +60,14 @@ def unpack_tasks(arg_parser, prog):
             action,
             (
                 argparse._StoreAction,
-                argparse._StoreTrueAction,
-                argparse._StoreFalseAction,
+                # _StoreConstAction covers store_true and store_false, which are it
+                # with const=True/False, default the negation, and nargs=0.
+                argparse._StoreConstAction,
                 argparse._AppendAction,
                 argparse._AppendConstAction,
+                argparse._CountAction,
             ),
         ):
-            # _StoreTrueAction = _StoreAction where const=True, default=False, nargs=0
             arg = Argument(
                 name=action.dest,
                 wdl_type=(

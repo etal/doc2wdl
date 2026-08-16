@@ -189,17 +189,27 @@ that flagship output, the first error `miniwdl check` reports is **D3**, at
 dest collides with a WDL keyword (`String? output`); and **D6** never blocks a checker at
 all, because `Array[Boolean] scatter_ = []` is valid WDL that merely says something
 false. So D3 and D12 are validity defects and D6 is a silent-correctness defect, which is
-the more dangerous kind. `action="version"` crashes the reader outright (D13, below).
+the more dangerous kind. Two further defects are reachable only from parsers the two
+bundled fixtures do not resemble: **D15**, a paired boolean flag that crashes the reader,
+and **D16**, a double quote in help text that breaks the generated `parameter_meta`.
 
 ### Open defects
 
-**D13 — `action="version"` crashes the argparse reader.** `unpack_tasks` raises
-`TypeError: What is this? _VersionAction(...)` on any parser declaring `--version` the
-idiomatic way, because `_VersionAction` is not in the handled-action tuple and the `else`
-branch is fatal. Measured against two real installed tools reachable by the CLI's own
-`getattr(module, args.parser)` mechanism — `mypy.dmypy.client.parser` and
-`watchdog.watchmedo.cli` — both die before emitting anything. A version flag describes
-the tool rather than an input, so it belongs with the options `docopter` already skips.
+**D15 — `argparse.BooleanOptionalAction` crashes the reader, and its last flag is the
+negated one.** It subclasses `Action` directly rather than any handled class, so it hits
+the same fatal `else` D13 did. Adding it to the tuple is not sufficient, which is why the
+D13 fix left it out: the reader picks `option_strings[-1]`, which for this action is
+`--no-foo`, so a Boolean input set to true would render the negation. The action carries
+both spellings, and the correct rendering — emit one flag or the other, never neither —
+is not expressible in either block template today.
+
+**D16 — a double quote in help text terminates the WDL `parameter_meta` literal.**
+`task_template.wdl` writes `{{ arg.name }}: "{{ arg.doc }}"` with no escaping. Measured
+on `mypy.dmypy.client.parser`, whose `inspect` subcommand documents its span format as
+`(e.g. 1:2:3:4:"int")`, and on `cnvlib.commands.AP`, where 6 of 392 help strings carry a
+quote. Escaping belongs to the writer: Jinja2's autoescaping is HTML escaping and is
+pinned off in both writers for good reason, so this needs a per-target filter. A
+backslash has the same exposure, and WDL reads `~{` inside a string as interpolation.
 
 **D14 — task titles can collide across tasks in one document.** `str.title()` lowercases
 interior capitals, so subcommands `runAll` and `runall` both become task `ToolRunall`,
@@ -271,6 +281,17 @@ target's block template comments it per line. **D11** — the version statement 
 `render(tasks)` that takes an iterable, so `cli.py` no longer joins rendered fragments.
 Both bundled help-text fixtures still generate byte-identical WDL, verified by checksum
 against the pre-change tree: the docopt path's output did not move.
+
+**D13** — `action="version"` raised `TypeError` from `unpack_tasks`, killing any parser
+that declared a version flag the idiomatic way. `_VersionAction` now joins `_HelpAction`
+in the skip, on the rule that both describe the tool rather than one of its inputs; the
+rule is spelled per reader rather than shared, because a live parser states the intent in
+its action class while help text can only guess it from a flag spelling. The
+handled-action tuple also gained `_CountAction` and generalized `_StoreTrueAction` and
+`_StoreFalseAction` to their base `_StoreConstAction`, so a bare `store_const` and a
+`count` flag no longer take the same fatal branch. `mypy.dmypy.client.parser` and
+`watchdog.watchmedo.cli` now unpack to 10 and 7 tasks; `cnvlib.commands.AP` contains none
+of these action classes, so the flagship output did not move.
 
 ### Working on the vendored parser
 
