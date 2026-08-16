@@ -41,11 +41,28 @@ Conceptual flow
 Known issues
 ------------
 
-- Option help text doesn't get transferred to `param_meta` automatically (yet).
-- Type inference is not perfect.
-- Arrayed types and other non-primitive types won't be detected, e.g. options that can
-  be repeated on the command line.
-- Only one output file from the command will be picked up in the task output.
-- Quirks in the original command's help text may slip through; docopt doesn't attempt to
-  catch everything (it really wasn't designed for this purpose).
+- Type inference is thin. Every positional argument is typed `File`, which is wrong for a
+  positional that is not a path — samtools' `region` is a genomic interval, not a file —
+  and an option that takes no value is typed `String` rather than `Boolean`.
+- Option help text does not reach `param_meta` when reading help text; the argparse
+  reader does carry it through.
+- Nextflow output is not yet reachable from the command line, and the process template
+  still needs rewriting against `nextflow lint`.
+- The `argparse` subcommand emits a document that WDL rejects when the parser has
+  subcommands, because the version statement is repeated once per task.
 
+Reading help text is best-effort by nature, and the limits are measured rather than
+guessed. Over a corpus of 36 help texts, 34 of them captured from real tools, positional
+arguments are recovered cleanly from about a quarter and usably from about a third, and
+about one in ten produces no usable usage line at all. The reliable shape is a single
+usage synopsis terminated by a blank line, naming at most one fixed subcommand, in which
+no flag's arity differs between the options list and the synopsis. That describes
+argparse-generated help well and hand-written getopt-style help poorly: where the options
+list follows the synopsis with no blank line, or a heading reads `USAGE` without a colon,
+or the same flag appears both bare and with a value, the result is a warning and a partial
+task rather than a complete one.
+
+None of that applies to the `argparse` subcommand, which introspects the parser object
+directly and parses no text. It is the better route for a Python tool in principle, but
+not yet in practice: the two defects listed above make its output invalid for any parser
+carrying subcommands, so use it only for a flat parser until they are fixed.
