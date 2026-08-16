@@ -64,12 +64,11 @@ def cmd_argparse(args):
     parser_obj = getattr(module, args.parser)
     prog = args.module.split(".", 1)[0]
 
-    out_wdls = [
-        wdlgen.render(task) for task in argparser.unpack_tasks(parser_obj, prog)
-    ]
-    # TODO: strip the first line ("version") after the first task
-    out_text = "\n\n".join(out_wdls)
-    args.output.write(out_text)
+    tasks = list(argparser.unpack_tasks(parser_obj, prog))
+    # A parser carrying nothing but --help yields no tasks, and a document with no
+    # tasks is still valid WDL, so silence here would look like success.
+    print(f"Unpacked {len(tasks)} task(s) from {args.parser}.", file=sys.stderr)
+    args.output.write(wdlgen.render(tasks))
     return 0
 
 
@@ -89,8 +88,7 @@ def cmd_docopt(args):
         file=sys.stderr,
     )
     task = docopter.transform(usage, positionals, options)
-    out_wdl = wdlgen.render(task)
-    args.output.write(out_wdl)
+    args.output.write(wdlgen.render([task]))
     return 0
 
 

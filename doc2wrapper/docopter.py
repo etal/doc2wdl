@@ -93,8 +93,11 @@ def transform(usage, positionals, options):
     Return: a dictionary of template keyword arguments, carrying
 
         - the task title, i.e. name
+        - the usage prose, as plain text: the writer decides how its target
+          language spells a comment
         - the CLI prefix, i.e. the command words the task will invoke
-        - a list of `Argument` in the order the usage line declares them
+        - a list of `Argument`: the positionals in the order the usage line
+          declares them, then the options in the order the options block does
         - has_output_file
 
     Magic names:
@@ -160,7 +163,8 @@ def transform(usage, positionals, options):
 
     return dict(
         title=title,
-        usage="\n".join(["# " + line for line in usage.splitlines()]),
+        # Plain text: how a target language spells a comment is the writer's business.
+        usage=usage,
         cli_prefix=cli_prefix,
         cli_args=cli_args,
         has_output_file=has_output_file,

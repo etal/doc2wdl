@@ -77,6 +77,20 @@ def test_command_words_are_the_prefix_not_arguments(help_text):
     assert "view" not in [arg.name for arg in task["cli_args"]]
 
 
+def test_usage_reaches_the_model_as_plain_prose(help_text):
+    """A reader must not spell a target language's comment.
+
+    The reader used to prefix every usage line with `# ` itself, which is WDL's
+    comment syntax and not every target's, so a Nextflow block comment received
+    stray hashes.  Worse, it masked the fact that the other reader supplies no
+    prefix at all, and the WDL template dropped that prose at file scope, where it
+    is a syntax error.
+    """
+    task = docopter.transform(*docopter.parse(help_text("samtools-view")))
+    assert task["usage"].startswith("samtools view")
+    assert "#" not in task["usage"]
+
+
 @pytest.mark.parametrize(
     "doc", [NO_USAGE_SECTION, TWO_USAGE_SECTIONS, EMPTY_USAGE_SECTION]
 )

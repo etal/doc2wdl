@@ -48,8 +48,10 @@ Known issues
   reader does carry it through.
 - Nextflow output is not yet reachable from the command line, and the process template
   still needs rewriting against `nextflow lint`.
-- The `argparse` subcommand emits a document that WDL rejects when the parser has
-  subcommands, because the version statement is repeated once per task.
+- The `argparse` subcommand does not sanitize argument names against WDL's keywords, so a
+  parser with an `--output` option emits `String? output`, which WDL rejects. It also
+  reports `nargs` backwards, marking scalars as arrays and arrays as scalars, and raises
+  `TypeError` outright on a parser declaring `--version` with `action="version"`.
 
 Reading help text is best-effort by nature, and the limits are measured rather than
 guessed. Over a corpus of 36 help texts, 34 of them captured from real tools, positional
@@ -64,5 +66,6 @@ task rather than a complete one.
 
 None of that applies to the `argparse` subcommand, which introspects the parser object
 directly and parses no text. It is the better route for a Python tool in principle, but
-not yet in practice: the two defects listed above make its output invalid for any parser
-carrying subcommands, so use it only for a flat parser until they are fixed.
+not yet in practice: it now emits one valid document for a parser with subcommands, but
+the keyword and `nargs` defects listed above still make that document wrong for many real
+parsers, so check its output before trusting it.

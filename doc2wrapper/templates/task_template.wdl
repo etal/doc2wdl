@@ -1,6 +1,6 @@
-version 1.1
-
-{{ usage }}
+{% for line in usage.splitlines() %}
+# {{ line }}
+{% endfor %}
 
 task {{ title }} {
   input {

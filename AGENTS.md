@@ -53,10 +53,13 @@ doc2wrapper/
   tasktree.py    MODEL: the `Argument` dataclass and the helpers keyed on it
   wdlgen.py      WRITER: object model -> WDL; owns RESERVED_WDL_NAMES
   nfgen.py       WRITER: object model -> Nextflow (not reachable from the CLI)
-  render.py      Jinja2 environment shared by the writers; a writer needing
-                 different settings should build its own rather than add a flag
+  render.py      Jinja2 environment shared by the writers, at two levels:
+                 `render_block` for one task, `render_document` for the whole file.
+                 A writer needing different settings should build its own
+                 environment rather than add a flag
   _docopt.py     VENDORED: the static grammar subset of docopt 0.6.2
-  templates/     Jinja2 templates: task_template.wdl, process_template.nf
+  templates/     Jinja2 templates, one document and one block template per target:
+                 document_template.{wdl,nf}, task_template.wdl, process_template.nf
 tests/           pytest suite; `tests/example/` holds captured help texts and a Makefile
 ```
 
@@ -68,6 +71,21 @@ reader to know about WDL, the abstraction has been breached. Two consequences ar
 enforced: name sanitization against a language's reserved words happens in the **writer**
 (`tasktree.rename_reserved`, called with `RESERVED_WDL_NAMES` or `RESERVED_NF_NAMES`),
 and `type_and_default` lives in `tasktree` rather than in either writer.
+
+Rendering is split in two because a document is not a task. Statements that may appear
+only once per file — WDL's `version`, Nextflow's shebang and `nextflow.enable.dsl` —
+belong to the document template, which is the only layer that knows how many blocks are
+being emitted; keeping them in the block template is how a two-task document came to
+carry two version statements. Each writer therefore exposes exactly one public
+`render(tasks)` taking an iterable, so no caller of `wdlgen` or `nfgen` can obtain a
+fragment and concatenate two of them. `render.render_block` still can, and nothing
+enforces otherwise: a lone WDL block passes `miniwdl check`, because a version-less
+document falls back to draft-2, where `~{...}` is not interpolation and every
+declaration merely goes unreferenced. Its docstring is the only guard, so keep that
+docstring true. Spelling a comment is likewise per-target and lives in the block
+template: WDL 1.1 has only `#` line comments (`/* ... */` is a grammar error, not a
+style preference), while the Nextflow template wraps the same prose in `/* ... */`, so
+there is no shared helper to write and readers pass `usage` through as plain text.
 
 One breach remains, and it is honest to name it: `Argument.wdl_type` puts a WDL type name
 in the shared model, both readers fill it in, and the Nextflow template never reads it.
@@ -118,14 +136,19 @@ rm -rf build doc2wrapper.egg-info && python -m venv /tmp/v && /tmp/v/bin/pip ins
 
 `tests/example/Makefile` encodes an older shell-level version of the same loop
 (`make test`, `make check`); it assumes `doc2wrapper` is on `PATH`, and its
-`cnvkit-antitarget-argparse` target needs `cnvlib`, which is **not importable** in the
-local `cnvkit` conda environment.
+`cnvkit-antitarget-argparse` target needs `cnvlib`. That import works, but only if you
+call the environment's interpreter directly —
+`/opt/homebrew/Caskroom/miniconda/base/envs/cnvkit/bin/python3` — because `conda run -n
+cnvkit` and `conda activate` both fail on this machine with a broken activation hook.
+An earlier revision of this file recorded `cnvlib` as simply "not importable"; that
+conclusion came from trusting `conda run`, and it cost the flagship fixture.
 
 ## Current state
 
-The help-text path works end to end and is covered by tests; the argparse path does not.
-Everything below was verified by execution on 2026-08-15, and each open item is filed in
-beads — run `bd ready`.
+The help-text path works end to end and is covered by tests. The argparse path now emits
+valid WDL for a parser with subcommands, but still misstates types and collides with
+keywords. Everything below was verified by execution on 2026-08-16, and each open item is
+filed in beads — run `bd ready`.
 
 ### What the help-text reader will and will not handle
 
@@ -157,37 +180,48 @@ That covers argparse-generated tools well and hand-written C tools poorly. Both 
 fixtures sit inside it, which is why they were never a sample.
 
 **The argparse reader has no such limits** — it reads a live parser object and needs no
-text parsing at all. It is nonetheless the *more* broken path today, because D2 and D11
-mean it has never emitted valid WDL for a parser with subcommands. Once those are fixed
-it should become the recommended path for any Python tool.
+text parsing at all. With D2 and D11 fixed it now emits a single valid document for a
+parser with subcommands: `cnvlib.commands.AP`, the README's flagship example, unpacks to
+35 tasks under one `version 1.1`. It is nonetheless still the *more* broken path. Three
+defects stand between it and WDL that checks, and they are not a sequence — measured on
+that flagship output, the first error `miniwdl check` reports is **D3**, at
+`String? output_dir = .`, an unquoted string default; **D12** bites separately wherever a
+dest collides with a WDL keyword (`String? output`); and **D6** never blocks a checker at
+all, because `Array[Boolean] scatter_ = []` is valid WDL that merely says something
+false. So D3 and D12 are validity defects and D6 is a silent-correctness defect, which is
+the more dangerous kind. `action="version"` crashes the reader outright (D13, below).
 
 ### Open defects
 
-**D2 — the argparse reader emits syntactically invalid WDL.** It sets
-`usage = description + epilog` as raw prose, while the template drops `{{ usage }}` at
-file scope; the docopt reader happens to prefix each line with `#` first, and the
-argparse reader does not. `miniwdl check` fails at the parse stage. Commenting belongs in
-the template or the writer, not in one of the two readers.
+**D13 — `action="version"` crashes the argparse reader.** `unpack_tasks` raises
+`TypeError: What is this? _VersionAction(...)` on any parser declaring `--version` the
+idiomatic way, because `_VersionAction` is not in the handled-action tuple and the `else`
+branch is fatal. Measured against two real installed tools reachable by the CLI's own
+`getattr(module, args.parser)` mechanism — `mypy.dmypy.client.parser` and
+`watchdog.watchmedo.cli` — both die before emitting anything. A version flag describes
+the tool rather than an input, so it belongs with the options `docopter` already skips.
 
-**D11 — multi-task output repeats the version statement.** `cli.cmd_argparse` joins N
-rendered tasks with `\n\n` while `task_template.wdl` begins with `version 1.1`, so a
-parser with subcommands yields N version statements and miniwdl rejects the document. The
-`# TODO: strip the first line` comment at `cli.py` names it; the author's own intended fix
-is a document-level template (planned in `97870dc`'s docstring) that owns the version
-header, with tasks nested inside. Together with D2 this means the argparse path has never
-produced valid WDL for the README's flagship example.
+**D14 — task titles can collide across tasks in one document.** `str.title()` lowercases
+interior capitals, so subcommands `runAll` and `runall` both become task `ToolRunall`,
+and `miniwdl` rejects the document with `Multiple tasks named ToolRunall`. Latent until
+now, because a multi-task document was invalid anyway; the D11 fix makes multi-task the
+normal argparse output. Distinct from the argument-name collision already filed.
 
 **D3 — Python literals leak into WDL.** `Boolean? verbose = False` is emitted; WDL spells
 it `false`. Defaults pass through `str()`/`repr()` with no target-language serializer.
 
 **D5 — the Nextflow path is unreachable and invalid.** `cli.py` never imports `nfgen`, so
 there is no way to ask for Nextflow output. Invoked directly, it produces
-`val output_file = "$output_file_name"`, which `nextflow lint` rejects at `18:25`. The
+`val output_file = "$output_file_name"`, which `nextflow lint` rejects at `19:25`. The
 template also carries WDL idioms into Groovy: `${if defined(x) then "-f" else ""}` is not
 Groovy, and `${"-f " + x}` renders the literal `-f null` rather than eliding the flag.
 Nextflow's optional-flag idiom is different and the template needs to be rewritten
 against `nextflow lint`, not adapted from the WDL one. `tests/test_generate.py` carries a
 `strict=True` xfail for this, so it will announce itself the moment it starts passing.
+The document/block split has already removed the shebang and `nextflow.enable.dsl` from
+`process_template.nf`, so the rewrite's surface is now process-level syntax only. Note for
+that work: a `/* ... */` comment can be terminated early by a `*/` inside captured help
+text, which per-line `//` would avoid — WDL's `#` has no such hazard.
 
 **D6 — `is_array` is inverted in the argparse reader.** It computes
 `is_array=(action.nargs in (0, 1, "?"))`, which marks scalars as arrays; the array cases
@@ -215,8 +249,11 @@ description; `requires-python = ">=3.7"` is contradicted by `tasktree.py`, which
 `str | None` and needs 3.10; and `project.urls` points at a non-existent repository.
 
 Smaller known wrongness, filed but low priority: help-text notation leaks into flags, so
-samtools' `--region[s]-file FILE` becomes a literal flag `--region[s]-file`; and
-`RESERVED_WDL_NAMES` holds one entry against roughly thirty WDL 1.1 keywords.
+samtools' `--region[s]-file FILE` becomes a literal flag `--region[s]-file`. Not low
+priority any more, though it is still small: **D12**, `RESERVED_WDL_NAMES` holding one
+entry against roughly thirty WDL 1.1 keywords, is what now blocks the argparse path.
+With D2 and D11 fixed, a parser with a `--output` option renders `String? output`, and
+`miniwdl` rejects it with `unexpected keyword output`.
 
 ### Resolved
 
@@ -226,6 +263,14 @@ samtools' `--region[s]-file FILE` becomes a literal flag `--region[s]-file`; and
 docopt's pattern tree and walked. **D4** — the output declaration emitted the literal
 `"$output_file_name"` instead of an interpolation. **D7** — `docopt.py` sat at the
 repository root, outside the package, so an installed wheel could not import it.
+**D2** — the argparse reader set `usage` to raw `description + epilog` prose, which
+`task_template.wdl` dropped at file scope; the docopt reader escaped this only by
+spelling WDL's `#` itself, in a reader. Both readers now pass plain text and each
+target's block template comments it per line. **D11** — the version statement moved from
+`task_template.wdl` to a new `document_template.wdl`, and each writer now exposes one
+`render(tasks)` that takes an iterable, so `cli.py` no longer joins rendered fragments.
+Both bundled help-text fixtures still generate byte-identical WDL, verified by checksum
+against the pre-change tree: the docopt path's output did not move.
 
 ### Working on the vendored parser
 

@@ -17,9 +17,12 @@ def unpack_tasks(arg_parser, prog):
 
     If the given ArgumentParser contains subcommands, each subcommand will also be
     unpacked (recursively) to yield more tasks. If the parent command contains a mix of
-    normal arguments (other than --help) and subcommands, the parent command will be
-    emitted as a task that skips the subcommands as arguments, and then each subcommand
-    will be individually emitted as another task.
+    normal arguments (other than --help) and subcommands, each subcommand is emitted
+    first and the parent command is emitted last, as a task that skips the subcommands
+    as arguments -- the recursion happens while walking the parent's actions, whereas
+    the parent's own task is not complete until that walk has finished.  So emission
+    order is not source order for such a parser, and the document preserves emission
+    order.
 
     If an ArgumentParser contains no options/arguments other than a "--help" option
     and/or subcommands, it won't be yielded as a task; only the subcommands (if any)

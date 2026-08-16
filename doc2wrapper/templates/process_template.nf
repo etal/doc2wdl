@@ -1,8 +1,7 @@
-#!/usr/bin/env nextflow
-nextflow.enable.dsl=2
-
 /*
- * {{ usage }}
+{% for line in usage.splitlines() %}
+ * {{ line }}
+{% endfor %}
  */
 process {{ title }} {
 
