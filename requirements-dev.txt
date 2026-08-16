@@ -2,6 +2,7 @@ Sphinx
 black
 coverage
 flake8
+miniwdl
 pip
 pytest
 tox
