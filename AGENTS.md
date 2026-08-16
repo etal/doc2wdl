@@ -38,14 +38,23 @@ Note the naming skew, which is historical and not worth churning: the **checkout
 **package and console script** are `doc2wrapper`. `pyproject.toml`'s `project.urls`
 entries point at a non-existent `etal/doc2wrapper` and are wrong.
 
+`CLAUDE.md` is a symlink to this file, so the two cannot drift. That holds on macOS
+and on WSL2's own ext4 filesystem. It does not hold for a checkout made by native
+Windows git without Developer Mode, or on a DrvFS path under `/mnt/c`: git falls back
+to `core.symlinks=false` and materializes `CLAUDE.md` as a nine-byte text file whose
+contents are the string `AGENTS.md`. If you find yourself reading that, read this file
+instead.
+
 ```
 doc2wrapper/
   cli.py         argparse-based console entry point; two subcommands, `docopt` and `argparse`
   docopter.py    READER: help text -> object model, via the vendored parser
   argparser.py   READER: live ArgumentParser -> object model, via argparse internals
   tasktree.py    MODEL: the `Argument` dataclass and the helpers keyed on it
-  wdlgen.py      WRITER: object model -> WDL
+  wdlgen.py      WRITER: object model -> WDL; owns RESERVED_WDL_NAMES
   nfgen.py       WRITER: object model -> Nextflow (not reachable from the CLI)
+  render.py      Jinja2 environment shared by the writers; a writer needing
+                 different settings should build its own rather than add a flag
   _docopt.py     VENDORED: the static grammar subset of docopt 0.6.2
   templates/     Jinja2 templates: task_template.wdl, process_template.nf
 tests/           pytest suite; `tests/example/` holds captured help texts and a Makefile

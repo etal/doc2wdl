@@ -5,6 +5,7 @@ tree and inspected statically.  Nothing here ever matches the text against
 ``sys.argv`` -- doing so is what made every positional argument disappear.
 """
 import itertools
+import re
 import sys
 from dataclasses import dataclass
 
@@ -105,10 +106,12 @@ def transform(usage, positionals, options):
               stdout as its output.
     """
     cli_prefix = " ".join(_command_words(usage))
-    title = cli_prefix.replace(".py", "").title().replace(" ", "").replace("-", "")
-    if not title[:1].isalpha():
-        # A command such as `2to3` would otherwise yield an illegal task name.
-        title = "Task" + title
+    # `.title()` runs before filtering, so that word boundaries the filter is about
+    # to remove still capitalize: `cnvkit.py antitarget` -> `CnvkitAntitarget`.
+    title = _legal_name(
+        cli_prefix.replace(".py", "").title().replace(" ", "").replace("-", ""),
+        prefix="Task",
+    )
 
     cli_args = [
         Argument(
@@ -129,12 +132,12 @@ def transform(usage, positionals, options):
 
     has_output_file = False
     for opt in options:
-        option_flag = opt.name
         # docopt's Option.name is the long flag when there is one and the short
         # flag otherwise, which is how a short-only `-h` gets recognised too.
-        if opt.name in _SKIPPED_OPTIONS and opt.argcount == 0:
+        option_flag = opt.name
+        if option_flag in _SKIPPED_OPTIONS and opt.argcount == 0:
             continue
-        if opt.name in _OUTPUT_OPTIONS and opt.argcount == 1:
+        if option_flag in _OUTPUT_OPTIONS and opt.argcount == 1:
             # This variable will also be used in the WDL task's `output` section
             name = OUTPUT_FILE_NAME
             has_output_file = True
@@ -181,6 +184,18 @@ def _command_words(usage):
     return tokens[:1] + list(itertools.takewhile(_is_command_word, tokens[1:]))
 
 
+def _legal_name(name, prefix):
+    """Keep only the characters a target language accepts, and start with a letter.
+
+    WDL requires an identifier to begin with a LETTER: a leading underscore is
+    rejected exactly as a leading digit is, so the prefix has to be a real word.
+    Applied on the reader side because a name legal in WDL is also legal in Groovy,
+    which keeps one rule rather than one per writer.
+    """
+    kept = re.sub(r"[^A-Za-z0-9_]", "", re.sub(r"[-.]", "_", name))
+    return kept if kept[:1].isalpha() else prefix + kept
+
+
 def _identifier(token):
     """Turn a usage token such as ``<in.bam>`` or ``--min-size`` into an identifier.
 
@@ -188,21 +203,17 @@ def _identifier(token):
     is not a closed set -- `FILE(S)`, `<a/b>` and `<n,m>` all occur -- so this keeps
     what is legal rather than removing what is known to be illegal.
     """
-    name = "".join(
-        character
-        if character.isascii() and (character.isalnum() or character == "_")
-        else "_"
-        if character in "-."
-        else ""
-        for character in token.lstrip("-").strip("<>")
-    )
-    # Neither WDL nor Nextflow accepts an identifier starting with a digit, which
-    # a short-only numeric flag such as `-1` would otherwise produce.
-    return name if name[:1].isalpha() else "_" + name
+    return _legal_name(token.lstrip("-").strip("<>"), prefix="arg_")
 
 
 def _parse_positionals(printable, usage, options):
-    """Read the positional arguments out of the usage line's pattern tree."""
+    """Read the positional arguments out of the usage line's pattern tree.
+
+    `printable` must still carry its `usage:` marker: `formal_usage` drops the first
+    token of what it is given and treats the next as the program name, so passing
+    the marker-stripped `usage` instead makes it eat the program name and lose the
+    first positional.  The two arguments are not interchangeable.
+    """
     try:
         pattern = docopt.parse_pattern(docopt.formal_usage(printable), options)
     except docopt.DocoptLanguageError as why:
@@ -224,14 +235,19 @@ def _positionals_of(node, command_words, is_required=True, is_array=False):
     repeats the subcommand inside every one of them, and stripping only the first
     would shift every later alternative's arguments one slot out of alignment.
     """
-    # AnyOptions subclasses Optional, so it has to be recognised before the groups.
+    # Option has no `.children`, so it must be recognised before the generic arm.
+    # AnyOptions is included as a guard for the reader rather than from necessity:
+    # nothing populates its children on the static path, so the generic arm would
+    # return an empty list for it anyway.
     if isinstance(node, (docopt.Option, docopt.AnyOptions)):
         return []
     if isinstance(node, docopt.Command) and node.name in command_words:
         return []
     # Command subclasses Argument, so this arm covers both remaining leaf kinds.
     if isinstance(node, docopt.Argument):
-        return [Positional([node.name], is_required, is_array)]
+        return [
+            Positional([node.name], is_required=is_required, is_array=is_array)
+        ]
     if isinstance(node, docopt.Either):
         return _merge_alternatives(
             [

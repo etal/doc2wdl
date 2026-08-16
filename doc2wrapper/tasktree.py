@@ -27,8 +27,8 @@ class Argument:
 
         Templates must ask through this property. Spelling the test inline invites
         `option_flag is not none`, which is true for the empty-string default and so
-        silently drops every positional from the rendered command line -- a defect
-        that reached both templates once already.
+        silently drops every positional from the rendered command line -- exactly the
+        class of defect this property exists to make unspellable.
         """
         return not self.option_flag
 

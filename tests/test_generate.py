@@ -53,9 +53,14 @@ def test_every_declared_input_reaches_the_command_line(
 
 
 def test_positional_is_interpolated_not_quoted(help_text):
-    """`$name` is eleven literal characters; WDL interpolation is `~{name}`."""
+    """`$name` is eleven literal characters; WDL interpolation is `~{name}`.
+
+    Scoped to the command block on purpose: the usage text is embedded as comments,
+    so a help text containing a literal `$` would fail a whole-document scan for a
+    reason that has nothing to do with interpolation.
+    """
     wdl = wdlgen.render(docopter.transform(*docopter.parse(help_text("samtools-view"))))
-    assert "$" not in wdl
+    assert "$" not in "".join(command_block(wdl))
     assert "~{ in_bam }" in command_block(wdl)[1]
 
 

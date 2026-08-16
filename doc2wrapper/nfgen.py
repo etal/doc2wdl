@@ -1,7 +1,5 @@
 """Nextflow serialization from the task object model."""
-import jinja2
-
-from .tasktree import rename_reserved
+from .render import render as _render
 
 RESERVED_NF_NAMES = """
 process
@@ -17,21 +15,4 @@ def render(template_kwargs):
     Return:
         out_nf: str
     """
-    env = jinja2.Environment(
-        loader=jinja2.PackageLoader("doc2wrapper"),
-        # Pinned off rather than fixed: select_autoescape() already resolves to
-        # False for these extensions, so this preserves behaviour. It guards the
-        # case where a template is renamed or loaded from a string and silently
-        # starts turning the `&`, `<` and `>` of captured help text into entities.
-        autoescape=False,
-        lstrip_blocks=True,
-        trim_blocks=True,
-    )
-    template = env.get_template("process_template.nf")
-    out_nf = template.render(
-        **{
-            **template_kwargs,
-            "cli_args": rename_reserved(template_kwargs["cli_args"], RESERVED_NF_NAMES),
-        }
-    )
-    return out_nf
+    return _render("process_template.nf", RESERVED_NF_NAMES, template_kwargs)

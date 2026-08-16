@@ -10,11 +10,6 @@ import subprocess
 
 import pytest
 
-EXAMPLE_HELP = {
-    "cnvkit-antitarget": "help-cnvkit-antitarget.txt",
-    "samtools-view": "help-samtools-view.txt",
-}
-
 
 @pytest.fixture(scope="session")
 def example_dir(pytestconfig):
@@ -24,10 +19,15 @@ def example_dir(pytestconfig):
 
 @pytest.fixture(scope="session")
 def help_text(example_dir):
-    """Read one of the bundled help-text captures by short name."""
+    """Read one of the bundled help-text captures by short name.
+
+    The naming convention is the registry; `tests/example/Makefile` depends on it
+    too, so a second table mapping name to filename would be a third thing to keep
+    in step.
+    """
 
     def read(name):
-        return (example_dir / EXAMPLE_HELP[name]).read_text()
+        return (example_dir / f"help-{name}.txt").read_text()
 
     return read
 

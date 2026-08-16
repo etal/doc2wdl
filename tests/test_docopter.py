@@ -90,11 +90,12 @@ def test_missing_or_ambiguous_usage_section_is_fatal(doc):
         docopter.parse(doc)
 
 
-def test_subcommand_is_stripped_from_every_alternative():
-    """Stripping only the first alternative shifts the rest out of alignment.
+def test_subcommand_is_excluded_from_every_alternative():
+    """A subcommand is dropped from every branch, so alternatives stay aligned.
 
-    `sub` would otherwise be merged as an alternative spelling of `<x>`, pushing
-    `<y>` and `<z>` one slot right and silently demoting them to optional.
+    Naively removing it from the first alternative only would merge `sub` in as a
+    spelling of `<x>`, push `<y>` and `<z>` one slot right, and silently demote
+    them to optional.
     """
     usage, positionals, options = docopter.parse(REPEATED_SUBCOMMAND)
     assert docopter.transform(usage, positionals, options)["cli_prefix"] == "prog sub"
@@ -128,20 +129,33 @@ def test_output_option_becomes_the_declared_output_file(help_text):
     assert docopter.OUTPUT_FILE_NAME in [arg.name for arg in task["cli_args"]]
 
 
-def test_identifiers_are_legal_even_from_hostile_tokens():
+HOSTILE_TOKENS = ["<in.bam>", "--min-size", "-1", "<a/b>", "--", "FILE(S)", "-#"]
+
+
+@pytest.mark.parametrize("token", HOSTILE_TOKENS)
+def test_every_identifier_starts_with_a_letter(token):
+    """WDL rejects a leading underscore exactly as it rejects a leading digit.
+
+    Asserting the invariant rather than each expected string: an earlier guard
+    prefixed `_`, which satisfied a value-by-value test while still emitting an
+    identifier the checker refuses.
+    """
+    assert docopter._identifier(token)[:1].isalpha()
+
+
+def test_identifiers_keep_only_legal_characters():
     """Help-text punctuation is an open set, so only legal characters survive."""
     assert docopter._identifier("<in.bam>") == "in_bam"
     assert docopter._identifier("--min-size") == "min_size"
-    assert docopter._identifier("-1") == "_1"
+    assert docopter._identifier("-1") == "arg_1"
     assert docopter._identifier("<a/b>") == "ab"
-    assert docopter._identifier("--") == "_"
 
 
 def test_task_title_is_a_legal_identifier():
-    """`2to3` would otherwise name a task WDL cannot parse."""
-    task = docopter.transform(*docopter.parse("Usage: 2to3 <file>\n"))
-    assert task["title"] == "Task2To3"
-    assert task["cli_prefix"] == "2to3"
+    """`2to3` and `run.sh` would otherwise name a task WDL cannot parse."""
+    for usage, expected in (("2to3", "Task2To3"), ("run.sh", "Run_Sh")):
+        task = docopter.transform(*docopter.parse(f"Usage: {usage} <f>\n"))
+        assert task["title"] == expected
 
 
 def test_a_short_only_help_flag_is_still_skipped():
