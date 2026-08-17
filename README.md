@@ -51,7 +51,8 @@ Known issues
 - The `argparse` subcommand does not sanitize argument names against WDL's keywords, so a
   parser with an `--output` option emits `String? output`, which WDL rejects. It also
   reports `nargs` backwards, marking scalars as arrays and arrays as scalars, and raises
-  `TypeError` outright on a parser declaring `--version` with `action="version"`.
+  `TypeError` outright on a parser using `argparse.BooleanOptionalAction`, whose paired
+  `--foo`/`--no-foo` spelling the generated command line cannot yet express.
 
 Reading help text is best-effort by nature, and the limits are measured rather than
 guessed. Over a corpus of 36 help texts, 34 of them captured from real tools, positional

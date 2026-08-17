@@ -17,16 +17,16 @@ def unpack_tasks(arg_parser, prog):
 
     If the given ArgumentParser contains subcommands, each subcommand will also be
     unpacked (recursively) to yield more tasks. If the parent command contains a mix of
-    normal arguments (other than --help) and subcommands, each subcommand is emitted
-    first and the parent command is emitted last, as a task that skips the subcommands
+    normal arguments (other than --help and --version) and subcommands, each subcommand
+    is emitted first and the parent command last, as a task that skips the subcommands
     as arguments -- the recursion happens while walking the parent's actions, whereas
     the parent's own task is not complete until that walk has finished.  So emission
     order is not source order for such a parser, and the document preserves emission
     order.
 
-    If an ArgumentParser contains no options/arguments other than a "--help" option
-    and/or subcommands, it won't be yielded as a task; only the subcommands (if any)
-    will be yielded.
+    If an ArgumentParser contains no options/arguments other than a "--help" and/or
+    "--version" option and/or subcommands, it won't be yielded as a task; only the
+    subcommands (if any) will be yielded.
 
     If there are no normal arguments/options, emit nothing (no tasks, empty iterable).
 
@@ -43,11 +43,11 @@ def unpack_tasks(arg_parser, prog):
         "has_output_file": False,
     }
     for action in arg_parser._actions:
-        # `--help` and `--version` describe the tool itself rather than one of its
-        # inputs, which is the same rule the docopt reader applies through
-        # `_SKIPPED_OPTIONS`.  It is spelled here in the vocabulary this reader has --
-        # the action class -- rather than shared as a list of flag spellings, because
-        # a live parser states the intent and does not have to guess it from a name.
+        # `--help` and `--version` describe the tool, not its inputs -- the rule
+        # `docopter._SKIPPED_OPTIONS` applies to help text.  Not shared as one list:
+        # a live parser states the intent in the action class, never in a spelling,
+        # which is why a `-v` spelled version flag is skipped here and deliberately
+        # is not there, where it means "verbose" as often as "version".
         if isinstance(action, (argparse._HelpAction, argparse._VersionAction)):
             continue
 
@@ -73,7 +73,8 @@ def unpack_tasks(arg_parser, prog):
                 wdl_type=(
                     "Boolean"
                     if action.type is bool or isinstance(action.default, bool)
-                    # XXX or action.const is not None?
+                    # Not action.const: a bare store_const carries a value of any
+                    # type, so const="fast" is a String input, not a Boolean one.
                     else "Int"
                     if action.type is int or isinstance(action.default, int)
                     else "Float"

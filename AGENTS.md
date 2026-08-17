@@ -187,9 +187,9 @@ defects stand between it and WDL that checks, and they are not a sequence — me
 that flagship output, the first error `miniwdl check` reports is **D3**, at
 `String? output_dir = .`, an unquoted string default; **D12** bites separately wherever a
 dest collides with a WDL keyword (`String? output`); and **D6** never blocks a checker at
-all, because `Array[Boolean] scatter_ = []` is valid WDL that merely says something
-false. So D3 and D12 are validity defects and D6 is a silent-correctness defect, which is
-the more dangerous kind. Two further defects are reachable only from parsers the two
+all, because `Array[Boolean] scatter_ = []` is valid WDL that quietly pins every bare
+flag on. So D3 and D12 are validity defects and D6 is a silent-correctness defect, which
+is the more dangerous kind. Two further defects are reachable only from parsers the two
 bundled fixtures do not resemble: **D15**, a paired boolean flag that crashes the reader,
 and **D16**, a double quote in help text that breaks the generated `parameter_meta`.
 
@@ -237,7 +237,12 @@ text, which per-line `//` would avoid — WDL's `#` has no such hazard.
 `is_array=(action.nargs in (0, 1, "?"))`, which marks scalars as arrays; the array cases
 are `nargs` in `("*", "+")`, an integer greater than one, and `action="append"`. The WDL
 template now consumes `is_array`, so this error has become visible output rather than a
-dormant field.
+dormant field, and the visible output is worse than a wrong type name. A bare flag is
+declared `Array[Boolean] recursive = []` and rendered as
+`~{if defined(recursive) then "--recursive" else ""}`; `defined()` is false only for
+`None`, and a non-optional declaration carrying a default is never `None`, so the flag
+is emitted unconditionally and no input value can switch it off. Verified with miniwdl's
+own evaluator, which returns `'--recursive'` for the declared default of `[]`.
 
 **D9 — type inference is thin and inconsistent.** Concrete evidence in the current output:
 samtools' `region` is a genomic interval, but every positional is typed `File`, so it
@@ -280,18 +285,13 @@ target's block template comments it per line. **D11** — the version statement 
 `task_template.wdl` to a new `document_template.wdl`, and each writer now exposes one
 `render(tasks)` that takes an iterable, so `cli.py` no longer joins rendered fragments.
 Both bundled help-text fixtures still generate byte-identical WDL, verified by checksum
-against the pre-change tree: the docopt path's output did not move.
-
-**D13** — `action="version"` raised `TypeError` from `unpack_tasks`, killing any parser
-that declared a version flag the idiomatic way. `_VersionAction` now joins `_HelpAction`
-in the skip, on the rule that both describe the tool rather than one of its inputs; the
-rule is spelled per reader rather than shared, because a live parser states the intent in
-its action class while help text can only guess it from a flag spelling. The
-handled-action tuple also gained `_CountAction` and generalized `_StoreTrueAction` and
-`_StoreFalseAction` to their base `_StoreConstAction`, so a bare `store_const` and a
-`count` flag no longer take the same fatal branch. `mypy.dmypy.client.parser` and
-`watchdog.watchmedo.cli` now unpack to 10 and 7 tasks; `cnvlib.commands.AP` contains none
-of these action classes, so the flagship output did not move.
+against the pre-change tree: the docopt path's output did not move. **D13** —
+`action="version"` raised `TypeError` from `unpack_tasks`, killing any parser that
+declared a version flag the idiomatic way; `_VersionAction` now joins `_HelpAction` in
+the skip, and the handled-action tuple gained `_CountAction` and generalized
+`_StoreTrueAction` and `_StoreFalseAction` to their base `_StoreConstAction`, so a bare
+`store_const` and a `count` flag no longer take the same fatal branch. The flagship
+output did not move, verified by checksum.
 
 ### Working on the vendored parser
 

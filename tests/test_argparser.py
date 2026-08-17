@@ -4,14 +4,10 @@ import argparse
 from doc2wrapper import argparser
 
 
-def names(parser, prog="tool"):
-    """The input names of the single task the given parser unpacks to."""
-    (task,) = argparser.unpack_tasks(parser, prog)
-    return [arg.name for arg in task["cli_args"]]
-
-
 def test_version_is_not_an_input():
     """`--version` describes the tool, so it belongs with `--help`, not the inputs.
+
+    `add_help` is left on here, so the one assertion covers both skips.
 
     Declaring it the idiomatic way used to raise from the reader's `else` branch,
     which meant a parser as ordinary as `mypy.dmypy.client.parser` produced nothing
@@ -20,7 +16,8 @@ def test_version_is_not_an_input():
     parser = argparse.ArgumentParser(prog="tool")
     parser.add_argument("--version", action="version", version="1.0")
     parser.add_argument("infile")
-    assert names(parser) == ["infile"]
+    (task,) = argparser.unpack_tasks(parser, "tool")
+    assert [arg.name for arg in task["cli_args"]] == ["infile"]
 
 
 def test_bare_const_and_count_flags_are_inputs():
@@ -38,11 +35,11 @@ def test_bare_const_and_count_flags_are_inputs():
     assert not any(arg.option_has_value for arg in task["cli_args"])
 
 
-def test_store_true_and_store_false_survive_the_const_generalization():
-    """They are `_StoreConstAction` subclasses, so listing the base must keep them.
+def test_store_false_default_is_not_confused_with_its_const():
+    """A `store_false` argument's default is True, and the reader must report that.
 
-    A `store_false` argument defaults to True, which is the case that would expose a
-    handler keyed on the const rather than on the action class.
+    Both are `_StoreConstAction` subclasses, so a handler keyed on the const value
+    rather than on the action class would invert this one and pass every other case.
     """
     parser = argparse.ArgumentParser(prog="tool", add_help=False)
     parser.add_argument("--loud", action="store_true")
