@@ -3,21 +3,25 @@
 from .render import render_document
 
 # Measured on Nextflow 25.10.4.  `nextflow lint` rejects the Groovy keywords listed
-# first as `val NAME`; the rest lint clean but misbehave.  `true`, `false`, `null`,
-# `threadsafe` and `strictfp` fail under `nextflow run`, and the others resolve to an
-# implicit variable or a class, so the command line silently receives, say, the task
-# map instead of the input's value.  Every class a Nextflow script imports by default
-# resolves this way, so the class names here are the commonly used ones measured, not
-# a complete set.
+# first, and the Nextflow keyword `include`, as `val NAME`, with one subtlety: `in` is
+# rejected only where another input follows, because as a binary operator it reads
+# the next `val` as its right operand, while `as` and `instanceof` fail in either
+# position.  The rest of the list lints clean but misbehaves.  `true`, `false`,
+# `null`, `threadsafe` and `strictfp` fail under `nextflow run`, and the others
+# resolve to an implicit variable or a class, so the command line silently receives,
+# say, the task map instead of the input's value.
+# Every class a Nextflow script imports by default resolves this way, so the class
+# names here are the commonly used ones measured, not a complete set.
 #
 # Unlike WDL's argument list, this one needs no entry for a name that
 # process_template.nf declares itself: `emit:` labels are a namespace of their own,
 # so inputs named `output_file` and `stdout` lint and run.
 RESERVED_NF_NAMES = """
 abstract as assert break case catch class const continue def default do else enum
-extends final finally for goto if implements import instanceof interface native new
-package private protected public return static super switch synchronized this throw
-throws transient try void volatile while
+extends final finally for goto if implements import in instanceof interface native
+new package private protected public return static super switch synchronized this
+throw throws transient try void volatile while
+include
 true false null threadsafe strictfp
 task it log session Channel channel System
 boolean byte char double float int long short

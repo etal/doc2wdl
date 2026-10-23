@@ -154,10 +154,24 @@ def test_reserved_words_are_renamed_per_target_language(check_wdl):
     assert "val scatter\n" in nfgen.render([task])
 
 
-def test_nextflow_renames_groovy_keywords(check_nextflow):
-    """`nextflow lint` rejects a Groovy keyword as an input name."""
-    nextflow = nfgen.render([one_argument_task("new")])
-    assert "val new_\n" in nextflow
+@pytest.mark.parametrize("keyword", ["new", "include"])
+def test_nextflow_renames_reserved_keywords(check_nextflow, keyword):
+    """`nextflow lint` fails on a Groovy or Nextflow keyword as an input name."""
+    nextflow = nfgen.render([one_argument_task(keyword)])
+    assert f"val {keyword}_\n" in nextflow
+    check_nextflow(nextflow)
+
+
+def test_nextflow_renames_in_although_it_lints_as_the_last_input(check_nextflow):
+    """`in` is a binary operator, so it reads the next declaration as its operand.
+
+    As the last input it lints and runs, which is why only an input following it
+    shows the defect: `val in` then `val other` is a syntax error.
+    """
+    task = one_argument_task("in")
+    task["cli_args"].append(Argument(name="other", wdl_type="String"))
+    nextflow = nfgen.render([task])
+    assert "val in_\n" in nextflow
     check_nextflow(nextflow)
 
 

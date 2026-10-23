@@ -216,6 +216,9 @@ A process with no arguments omits `input:`, because an empty section is a syntax
 `RESERVED_NF_NAMES` holds the Groovy keywords `lint` rejects as `val NAME`, plus names that lint accepts but that misbehave: `true`, `false`, `null`, `threadsafe` and `strictfp` fail under `nextflow run`, and `task`, `it`, `log`, `session`, `channel`, `System`, the primitive type names and commonly used class names such as `String`, `File` and `Path` resolve to an implicit variable or a class instead of the input.
 Every class a Nextflow script imports by default behaves this way, so the class names are a measured selection rather than a complete set.
 `process`, which the list used to hold, is accepted and runs correctly.
+`in` belongs to the first group although a process whose last input is `in` lints and runs: as a binary operator it reads the next declaration's `val` as its right operand, so it fails only where another input follows.
+The Nextflow keyword `include` joins it: `nextflow run` accepts `val include`, but `nextflow lint` stops with an internal error, `Range [15, 16) out of bounds`, in either position.
+The contextual keywords `trait`, `var`, `yield`, `record`, `permits` and `sealed` lint and run in either position, and are not listed.
 
 On `cnvlib.commands.AP`, the 35-process Nextflow document passes `nextflow lint` with no errors.
 
