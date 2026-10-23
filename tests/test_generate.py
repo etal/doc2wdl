@@ -1,4 +1,5 @@
 """End-to-end generation, validated by the target languages' own checkers."""
+
 import argparse
 
 import pytest
@@ -157,7 +158,7 @@ def test_reserved_words_are_renamed_per_target_language(check_wdl):
     strict=True,
     reason="the Nextflow writer is unreachable from the CLI and its template is "
     "still an adaptation of the WDL one: the output declaration is not valid "
-    "Nextflow, `${if defined(x) then ...}` is not Groovy, and `${\"-f \" + x}` "
+    'Nextflow, `${if defined(x) then ...}` is not Groovy, and `${"-f " + x}` '
     "renders `-f null` rather than eliding an unset flag. `nextflow lint` reports "
     "only the first error, so fixing one cause will not make this pass",
 )

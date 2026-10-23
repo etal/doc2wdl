@@ -1,4 +1,5 @@
 """Reading a tool's interface out of a live ArgumentParser."""
+
 import argparse
 
 from doc2wrapper import argparser

@@ -17,6 +17,7 @@ belong to `render_document`, which is the only layer that knows how many blocks 
 being emitted.  Keeping them in the block template is how a document with two tasks
 came to carry two version statements.
 """
+
 import jinja2
 
 from .tasktree import rename_reserved

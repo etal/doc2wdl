@@ -4,6 +4,7 @@ The help text is read as a GRAMMAR: the usage line is parsed into docopt's patte
 tree and inspected statically.  Nothing here ever matches the text against
 ``sys.argv`` -- doing so is what made every positional argument disappear.
 """
+
 import itertools
 import re
 import sys
@@ -249,9 +250,7 @@ def _positionals_of(node, command_words, is_required=True, is_array=False):
         return []
     # Command subclasses Argument, so this arm covers both remaining leaf kinds.
     if isinstance(node, docopt.Argument):
-        return [
-            Positional([node.name], is_required=is_required, is_array=is_array)
-        ]
+        return [Positional([node.name], is_required=is_required, is_array=is_array)]
     if isinstance(node, docopt.Either):
         return _merge_alternatives(
             [

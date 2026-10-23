@@ -1,4 +1,5 @@
 """Object model for a generated task, shared by every reader and writer."""
+
 from ast import literal_eval
 from dataclasses import dataclass, replace
 

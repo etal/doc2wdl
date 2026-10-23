@@ -5,6 +5,7 @@ tests run the real checkers rather than comparing against golden strings.  Neith
 checker is a Python dependency of this package; when one is missing its tests skip
 rather than fail, so the suite stays runnable on a bare checkout.
 """
+
 import shutil
 import subprocess
 

@@ -1,4 +1,5 @@
 """Nextflow serialization from the task object model."""
+
 from .render import render_block, render_document
 
 RESERVED_NF_NAMES = """

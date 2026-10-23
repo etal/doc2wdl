@@ -1,4 +1,5 @@
 """Reading a tool's interface out of its help text."""
+
 import pytest
 
 from doc2wrapper import docopter

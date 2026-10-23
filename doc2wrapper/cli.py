@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Console script endpoints.
-"""
+"""Console script endpoints."""
+
 import argparse
 import importlib
 import sys
