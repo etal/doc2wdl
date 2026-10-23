@@ -118,6 +118,10 @@ miniwdl check <file>.wdl     # WDL 1.1 parser and type checker
 nextflow lint  <file>.nf     # Nextflow 25.10+ parser; `-format` also reformats
 ```
 
+`nextflow` needs Java 17 to 25 and finds the system JDK first, which on the personal workstation is JDK 27, so it exits with "Cannot find Java or it's a wrong version".
+The `dev` environment carries its own JDK; point `JAVA_HOME` at it, as in `JAVA_HOME=/opt/homebrew/Caskroom/miniconda/base/envs/dev/lib/jvm`.
+Without that, the suite's Nextflow xfails still report as expected failures, but for the wrong reason.
+
 `tests/conftest.py` wires both into the suite as fixtures, skipping when a checker is
 absent. Any change to a template, a writer, or type inference **must** go through them.
 
