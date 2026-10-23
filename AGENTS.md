@@ -38,10 +38,8 @@ the task from scratch," not "runs unmodified."
 
 ## Orientation
 
-Note the naming skew, which is historical and not worth churning: the **checkout** is
-`doc2wdl` and so is the **git remote** (`git@github.com:etal/doc2wdl`), while the
-**package and console script** are `doc2wrapper`. `pyproject.toml`'s `project.urls`
-entries point at a non-existent `etal/doc2wrapper` and are wrong.
+Note the naming skew, which is historical and not worth churning: the **checkout** is `doc2wdl` and so is the **git remote** (`git@github.com:etal/doc2wdl`), while the **package and console script** are `doc2wrapper`.
+`pyproject.toml`'s `project.urls` and the CLI's epilog point at the remote.
 
 `CLAUDE.md` is a symlink to this file, so the two cannot drift. That holds on macOS
 and on WSL2's own ext4 filesystem. It does not hold for a checkout made by native
@@ -262,12 +260,6 @@ it, so retaining it is a small change in a file we now own. The argparse reader 
 `Argument.doc` from `action.help`, and the docopt reader now fills it for alternative
 positional spellings, so only the option descriptions are missing.
 
-**D8 — packaging metadata drift (partly fixed).** `testpaths` and the missing
-`package-data` entry are corrected. Still wrong: `readme = "README.rst"` names a file that
-does not exist, which setuptools ignores silently, shipping a wheel with no long
-description; `requires-python = ">=3.7"` is contradicted by `tasktree.py`, which uses
-`str | None` and needs 3.10; and `project.urls` points at a non-existent repository.
-
 Smaller known wrongness, filed but low priority: help-text notation leaks into flags, so
 samtools' `--region[s]-file FILE` becomes a literal flag `--region[s]-file`. Not low
 priority any more, though it is still small: **D12**, `RESERVED_WDL_NAMES` holding one
@@ -298,6 +290,11 @@ the skip, and the handled-action tuple gained `_CountAction` and generalized
 `store_const` and a `count` flag no longer take the same fatal branch. The flagship
 output did not move, verified by checksum.
 
+**D8** — `readme` named a non-existent `README.rst`, which setuptools ignores silently, so the wheel shipped with no long description; it now names `README.md`.
+`requires-python` is `>=3.10`, the version `str | None` in `tasktree.py` needs, which also matches `[tool.mypy]`.
+`project.urls` point at `etal/doc2wdl`.
+The bare `setup()` shim in `setup.py` is gone, since PEP 517 builds and editable installs do not need it, and `requirements-dev.txt` lists only tools the repository configures or runs.
+
 ### Working on the vendored parser
 
 `doc2wrapper/_docopt.py` is docopt 0.6.2 with every definition of the runtime
@@ -313,14 +310,12 @@ is not a stylistic scruple: deleting the class raises `NameError` on any usage l
 spells a flag, which is most of them. The samtools fixture hides this by writing
 `[options]` instead.
 
-Note the consequence for formatting generally: the tree was formatted with a `black`
-predating the blank-line-after-module-docstring rule, so a modern `black` or
-`ruff format` run would rewrite every file. Reformat deliberately and separately, with
-`_docopt.py` excluded — never as a side effect of another change.
+The tree is formatted with `ruff format`, configured in `pyproject.toml` to exclude `_docopt.py` even when the file is passed by name.
+The whole-tree reformat that adopted it is a commit of its own, listed in `.git-blame-ignore-revs`; keep any future formatter change the same way, never as a side effect of another change.
 
 ## Conventions
 
-- Formatting is `black`, already applied across the tree; keep it.
+- Formatting and linting are `ruff format` and `ruff check`, both clean across the tree; keep them so.
 - Both readers must keep producing the same template-kwargs `dict`. Widening the contract
   means updating `tasktree.Argument`, both readers, and both templates together.
 - Prefer fixing a defect in the writer or the model over fixing it in a reader; a bug that

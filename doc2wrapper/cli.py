@@ -13,7 +13,7 @@ from . import wdlgen
 def main():
     aparser = argparse.ArgumentParser(
         description="Generate WDL or Nextflow tool wrappers from CLI definitions.",
-        epilog="See the online docs for details: https://github.com/etal/doc2wrapper",
+        epilog="See the online docs for details: https://github.com/etal/doc2wdl",
     )
     aparser.set_defaults(func=lambda args: aparser.print_help())
     ap_subparsers = aparser.add_subparsers(

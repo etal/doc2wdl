@@ -1,11 +1,11 @@
-Sphinx
-black
+# Each entry is configured in pyproject.toml or run by the test suite.
+#
+# The suite validates generated output with both target languages' checkers, but
+# only miniwdl is installable from PyPI.  The Nextflow checker, `nextflow lint`,
+# ships with Nextflow itself (e.g. from Bioconda or https://get.nextflow.io), so it
+# cannot be declared here; tests that need it skip when it is absent.
 coverage
-flake8
 miniwdl
-pip
+mypy
 pytest
-tox
-twine
-watchdog
-wheel
+ruff

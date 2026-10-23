@@ -1,7 +1,7 @@
 [project]
 name = "doc2wrapper"
 description = "Generate standard workflow language wrappers for WDL or Nextflow from CLI definitions."
-readme = "README.rst"
+readme = "README.md"
 #license = "Apache-2.0"
 license = {text = "Apache-2.0"}
 authors = [
@@ -25,13 +25,13 @@ classifiers = [
   "Topic :: Scientific/Engineering",
   "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
-requires-python = ">=3.7"
+requires-python = ">=3.10"
 dynamic = ["version", "dependencies", "optional-dependencies"]
 
 [project.urls]
-homepage = "https://github.com/etal/doc2wrapper"
-documentation = "https://github.com/etal/doc2wrapper"
-repository = "https://github.com/etal/doc2wrapper"
+homepage = "https://github.com/etal/doc2wdl"
+documentation = "https://github.com/etal/doc2wdl"
+repository = "https://github.com/etal/doc2wdl"
 
 [project.scripts]
 "doc2wrapper" = "doc2wrapper.cli:main"
@@ -65,6 +65,13 @@ source = ["doc2wrapper"]
 
 [tool.coverage.paths]
 source = ["doc2wrapper"]
+
+[tool.ruff]
+# The vendored parser is kept byte-comparable with upstream docopt 0.6.2, so it is
+# neither reformatted nor linted.  force-exclude keeps the exclusion in effect when
+# a caller such as an editor integration passes the file by name.
+extend-exclude = ["doc2wrapper/_docopt.py"]
+force-exclude = true
 
 [tool.mypy]
 python_version = "3.10"
