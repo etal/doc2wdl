@@ -3,20 +3,25 @@
 import math
 from dataclasses import replace
 
-from .render import render_block, render_document
+from .render import render_document
 
 # The WDL 1.1 specification's Reserved Keywords, including the three it says to treat
 # as reserved for a future version.  WDL is case-sensitive, so `Object` and `object`
 # are separate entries.  miniwdl 1.15 rejects 30 of these as names and accepts the
 # rest: `Boolean`, `Object`, `after`, `in`, `version` and the three future ones.  The
 # specification is what another engine reads the `version 1.1` document against.
-# Task names and declaration names share the rule, so one list serves both.
+# Task names and declaration names share the keyword rule, so one list serves both.
 RESERVED_WDL_NAMES = """
 Array Boolean File Float Int Map None Object Pair String
 alias after as call command else false if in import input left meta object output
 parameter_meta right runtime scatter struct task then true version workflow
 Directory hints requirements
 """.split()
+
+# Names that task_template.wdl declares itself, which an input may not also take.
+# They are legal identifiers rather than keywords, and task names are a separate
+# namespace, so only the argument list includes them.
+TEMPLATE_WDL_NAMES = ["output_file"]
 
 _ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
 
@@ -33,22 +38,17 @@ def render(tasks):
     """
     return render_document(
         "document_template.wdl",
-        [
-            render_block(
-                "task_template.wdl",
-                reserved=RESERVED_WDL_NAMES,
-                reserved_titles=RESERVED_WDL_NAMES,
-                template_kwargs=_spelled(task),
-            )
-            for task in tasks
-        ],
+        "task_template.wdl",
+        reserved=RESERVED_WDL_NAMES + TEMPLATE_WDL_NAMES,
+        reserved_titles=RESERVED_WDL_NAMES,
+        tasks=(_spelled(task) for task in tasks),
     )
 
 
 def _spelled(task):
     """Replace each argument's Python default and doc text with their WDL spelling.
 
-    The arguments are copied, as `tasktree.rename_reserved` copies them, because a
+    The arguments are copied, as `tasktree.rename_arguments` copies them, because a
     second writer may render the same model afterwards.
     """
     return {

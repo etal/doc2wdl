@@ -2,8 +2,9 @@
 """Take a populated ArgumentParser, unpack it, and populate the task object model."""
 
 import argparse
+from dataclasses import replace
 
-from .tasktree import Argument
+from .tasktree import Argument, legal_name, task_title
 
 
 def unpack_tasks(arg_parser, prog):
@@ -33,12 +34,12 @@ def unpack_tasks(arg_parser, prog):
     Output: iterable of template-ready kwarg dictionaries.
     """
     task_kwargs = {
-        "title": (prog.replace(".py", "").title().replace(" ", "").replace("-", "")),
+        "title": task_title(prog),
         "usage": " ".join([arg_parser.description or "", arg_parser.epilog or ""]),
         "cli_prefix": prog,
-        "cli_args": [],
         "has_output_file": False,
     }
+    handled = []
     for action in arg_parser._actions:
         # `--help` and `--version` describe the tool, not its inputs -- the rule
         # `docopter._SKIPPED_OPTIONS` applies to help text.  Not shared as one list:
@@ -66,22 +67,106 @@ def unpack_tasks(arg_parser, prog):
                 argparse.BooleanOptionalAction,
             ),
         ):
-            task_kwargs["cli_args"].append(_argument(action))
+            handled.append(action)
         else:
             raise TypeError(f"What is this? {action} :: {type(action)}")
 
+    task_kwargs["cli_args"] = list(_arguments(handled))
     if task_kwargs["cli_args"]:
         yield task_kwargs
 
 
-def _argument(action):
-    """The model of one handled argparse action."""
+def _arguments(actions):
+    """Model the handled actions in source order, given which share a `dest`.
+
+    Several actions may write one `dest`.  A `store_true` and a `store_false` doing
+    so are one switch with a spelling for each value, which is how the model
+    already expresses `BooleanOptionalAction`, so they become one input at the
+    first one's position.  Any other actions sharing a `dest`, such as
+    `append_const` flags each adding a statistic to one list, are separately
+    passable, so each is named after its own flag (a positional keeps the `dest`):
+    the `dest` names what they build together, not what one of them controls.
+    The flag is the model's `option_flag` rather than the last option string,
+    which for a `BooleanOptionalAction` is its negation.  A switch with a single
+    spelling so named means "pass this flag", whatever value it stores, so that
+    its name and its value agree: a `store_false` spelled `-q` becomes an input `q`
+    that passes `-q` when true.  None of these flag-named inputs carries its
+    action's default, because argparse fills the `dest` from one action's default
+    alone, so each defaults to passing nothing and the tool's own default stands.
+    """
+    sharing = {}
+    for action in actions:
+        sharing.setdefault(action.dest, []).append(action)
+    for action in actions:
+        group = sharing[action.dest]
+        dest_name = legal_name(action.dest, prefix="arg_")
+        if len(group) == 1:
+            yield _argument(action, dest_name)
+        elif _is_paired_switch(group):
+            if action is group[0]:
+                yield _paired_switch(group, dest_name)
+        else:
+            arg = _argument(action, dest_name)
+            if arg.false_flag and not arg.option_flag:
+                arg = replace(arg, option_flag=arg.false_flag, false_flag="")
+            # A switch with one spelling is passed or not, as a `count` is; one
+            # with two may be left unset, which passes neither.
+            is_switch = action.nargs == 0 and not arg.false_flag
+            yield replace(
+                arg,
+                name=(
+                    legal_name(arg.option_flag.lstrip("-"), prefix="arg_")
+                    if arg.option_flag
+                    else dest_name
+                ),
+                default_value=False if is_switch else None,
+            )
+
+
+def _is_paired_switch(group):
+    """Are these the `store_true` and `store_false` actions of one switch?"""
+    return (
+        len(group) == 2
+        and all(
+            isinstance(action, argparse._StoreConstAction)
+            and action.option_strings
+            and isinstance(action.const, bool)
+            for action in group
+        )
+        and {action.const for action in group} == {True, False}
+    )
+
+
+def _paired_switch(group, name):
+    """One switch input for a `store_true` and a `store_false` sharing a `dest`.
+
+    argparse fills an absent `dest` from the first action whose default is not
+    `SUPPRESS`, so that action's default is the switch's default.
+    """
+    affirmative, negative = sorted(group, key=lambda action: not action.const)
+    defaulting = [action for action in group if action.default is not argparse.SUPPRESS]
+    first = _argument(defaulting[0] if defaulting else group[0], name)
+    return replace(
+        first,
+        option_flag=affirmative.option_strings[-1],
+        false_flag=negative.option_strings[-1],
+        is_required=any(action.required for action in group),
+        doc="\n".join(
+            f"{action.option_strings[-1]}: {action.help}"
+            for action in group
+            if action.help
+        ),
+    )
+
+
+def _argument(action, name):
+    """The model of one handled argparse action, under the given input name."""
     # SUPPRESS leaves the attribute absent from the namespace: there is no value.
     default = None if action.default is argparse.SUPPRESS else action.default
     if action.nargs == 0:
         option_flag, false_flag, default = _switch(action, default)
         return Argument(
-            name=action.dest,
+            name=name,
             wdl_type="Boolean",
             is_required=action.required,
             default_value=default,
@@ -105,7 +190,7 @@ def _argument(action):
         else action.nargs not in ("?", "*", argparse.REMAINDER, argparse.SUPPRESS)
     )
     return Argument(
-        name=action.dest,
+        name=name,
         wdl_type=(
             "Boolean"
             if action.type is bool or isinstance(default, bool)

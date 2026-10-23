@@ -1,5 +1,6 @@
 """Object model for a generated task, shared by every reader and writer."""
 
+import re
 from ast import literal_eval
 from dataclasses import dataclass, replace
 from typing import Any
@@ -94,8 +95,45 @@ def type_and_default(value):
     return wdl_type, value
 
 
-def rename_reserved(cli_args, reserved):
-    """Suffix any argument whose name collides with a target language's keyword.
+def legal_name(name, prefix):
+    """Keep only the characters a target language accepts, and start with a letter.
+
+    WDL requires an identifier to begin with a LETTER: a leading underscore is
+    rejected exactly as a leading digit is, so the prefix has to be a real word.
+    Applied by the readers because a name legal in WDL is also legal in Groovy,
+    which keeps one rule rather than one per writer.
+    """
+    kept = re.sub(r"[^A-Za-z0-9_]", "", re.sub(r"[-.]", "_", name))
+    return kept if kept[:1].isalpha() else prefix + kept
+
+
+def task_title(command):
+    """Name the task wrapping a command, such as `cnvkit.py antitarget`.
+
+    Each word is capitalized before punctuation is removed, so that boundaries the
+    removal erases still show: `CnvkitAntitarget`.  Unlike `str.title`, letters
+    that are not at a word boundary keep their case, so that subcommands `runAll`
+    and `runall` name two tasks rather than one, and `SAMtools` stays as written.
+    Only ASCII letters count as part of a word, because `legal_name` removes any
+    other letter, which then cannot join what follows: a letter after `ñ` starts a
+    word, and `ñdef` cannot become the Groovy keyword `def`.
+    """
+    capitalized = re.sub(
+        r"(?<![A-Za-z])[a-z]",
+        lambda match: match.group().upper(),
+        command.replace(".py", ""),
+    )
+    return legal_name(capitalized.replace(" ", "").replace("-", ""), prefix="Task")
+
+
+def rename_arguments(cli_args, reserved):
+    """Give every argument a name the target language accepts and no other has.
+
+    A name in `reserved` takes the suffix `_`, and a name an earlier argument
+    already holds takes `_2`, `_3` and so on, so the first argument wanting a name
+    keeps it.  Uniqueness is decided over the final names, after the keyword
+    rename, because the rename can itself create a duplicate: `scatter` becomes
+    `scatter_` beside an argument already named that.
 
     Reserved words differ per target language, so the renaming belongs to the
     writer rather than the reader: sanitizing at read time would bake one
@@ -103,11 +141,27 @@ def rename_reserved(cli_args, reserved):
     arguments are copied rather than mutated for the same reason -- a second
     writer may render the same model afterwards.
     """
+    taken = set()
     return [
-        replace(arg, name=rename_if_reserved(arg.name, reserved)) for arg in cli_args
+        replace(arg, name=unique_name(rename_if_reserved(arg.name, reserved), taken))
+        for arg in cli_args
     ]
 
 
 def rename_if_reserved(name, reserved):
     """Suffix one identifier if the target language will not accept it as a name."""
     return name + "_" if name in reserved else name
+
+
+def unique_name(name, taken):
+    """Return `name`, or the first of `name_2`, `name_3`, ... not in `taken`.
+
+    The result is added to `taken`, so successive calls never return one name twice.
+    """
+    unique = name
+    number = 1
+    while unique in taken:
+        number += 1
+        unique = f"{name}_{number}"
+    taken.add(unique)
+    return unique

@@ -54,13 +54,14 @@ doc2wrapper/
                  sharing `-t/--target {wdl,nextflow}` and `-o`
   docopter.py    READER: help text -> object model, via the vendored parser
   argparser.py   READER: live ArgumentParser -> object model, via argparse internals
-  tasktree.py    MODEL: the `Argument` dataclass and the helpers keyed on it
-  wdlgen.py      WRITER: object model -> WDL; owns RESERVED_WDL_NAMES and the spelling
-                 of Python values as WDL literals
+  tasktree.py    MODEL: the `Argument` dataclass, plus the naming and typing helpers
+                 the readers and writers share
+  wdlgen.py      WRITER: object model -> WDL; owns RESERVED_WDL_NAMES, TEMPLATE_WDL_NAMES
+                 and the spelling of Python values as WDL literals
   nfgen.py       WRITER: object model -> Nextflow; owns RESERVED_NF_NAMES and
                  RESERVED_NF_TITLES
-  render.py      Jinja2 environment shared by the writers, at two levels:
-                 `render_block` for one task, `render_document` for the whole file.
+  render.py      Jinja2 environment shared by the writers; `render_document` renders
+                 every block and the document around them in one call.
                  A writer needing different settings should build its own
                  environment rather than add a flag
   _docopt.py     VENDORED: the static grammar subset of docopt 0.6.2
@@ -73,23 +74,27 @@ Data flow is strictly one-directional: **reader → `dict` of template kwargs �
 The dict carries `title`, `usage`, `cli_prefix`, `cli_args` (a list of `Argument`), and `has_output_file`.
 Adding a target language should mean adding a writer plus a template, nothing else; adding an input format should mean adding a reader.
 If a change forces a reader to know about WDL, the abstraction has been breached.
-Three consequences are enforced.
-First, name sanitization against a language's reserved words happens in the **writer**: `render.render_block` renames arguments with `tasktree.rename_reserved` and the title with `tasktree.rename_if_reserved`, each against a list the writer passes.
+Four consequences are enforced.
+First, name sanitization against a language's reserved words happens in the **writer**: `render.render_document` renames arguments with `tasktree.rename_arguments` and titles with `tasktree.rename_if_reserved`, each against a list the writer passes.
 Arguments and titles take separate lists because the positions differ in Nextflow: an input named `File` resolves to a class, while a process named `File` works.
-Second, `type_and_default` lives in `tasktree` rather than in either writer.
-Third, `Argument.default_value` and `Argument.doc` hold Python values and plain text, never target-language syntax; `wdlgen` spells them as WDL literals on copies of the arguments, the same shape `rename_reserved` uses, so the shared Jinja2 environment carries no per-language filter.
+The argument list also carries names the block template declares itself, which are legal identifiers rather than keywords: WDL's `output_file`, while Nextflow's `emit:` labels form a namespace of their own and need no entry.
+Second, uniqueness is decided in the writer too, over the final names, because the keyword rename can itself create a duplicate, as `scatter` becomes `scatter_` beside an argument already named that.
+The first argument or task wanting a name keeps it, and later ones take `_2`, `_3` and so on; titles are unique per document, arguments per task.
+Character legality, by contrast, is the readers' business and one rule, `tasktree.legal_name`, since a name legal in WDL is legal in Groovy; both readers build titles with `tasktree.task_title`.
+Third, `type_and_default` lives in `tasktree` rather than in either writer.
+Fourth, `Argument.default_value` and `Argument.doc` hold Python values and plain text, never target-language syntax; `wdlgen` spells them as WDL literals on copies of the arguments, the same shape `rename_arguments` uses, so the shared Jinja2 environment carries no per-language filter.
 
 Rendering is split in two because a document is not a task.
 Statements that may appear only once per file — WDL's `version`, Nextflow's shebang and its note on unset inputs — belong to the document template, which is the only layer that knows how many blocks are being emitted; keeping them in the block template is how a two-task document came to carry two version statements.
-Each writer therefore exposes exactly one public `render(tasks)` taking an iterable, so no caller of `wdlgen` or `nfgen` can obtain a fragment and concatenate two of them.
-`render.render_block` still can, and nothing enforces otherwise: a lone WDL block passes `miniwdl check`, because a version-less document falls back to draft-2, where `~{...}` is not interpolation and every declaration merely goes unreferenced.
-Its docstring is the only guard, so keep that docstring true.
+Each writer therefore exposes exactly one public `render(tasks)` taking an iterable, and blocks are rendered only inside `render.render_document`, so no caller can obtain a fragment and concatenate two of them.
+That matters because a lone WDL block passes `miniwdl check`: a version-less document falls back to draft-2, where `~{...}` is not interpolation and every declaration merely goes unreferenced.
+Title uniqueness, a property of the whole document, is the second reason the blocks are rendered there.
 Spelling a comment is likewise per-target and lives in the block template.
 WDL 1.1 has only `#` line comments (`/* ... */` is a grammar error, not a style preference), and the Nextflow template uses `//` per line rather than a `/* ... */` block, which the first `*/` in captured help text would close early.
 So there is no shared helper to write, and readers pass `usage` through as plain text.
 
 One breach remains, and it is honest to name it: `Argument.wdl_type` puts a WDL type name in the shared model, both readers fill it in, and the Nextflow template never reads it.
-Repairing that means a neutral vocabulary in the model translated per writer — the same shape `rename_reserved` already uses — and it moves both readers and both templates at once, which is why it belongs to the type-inference work rather than to a passing edit.
+Repairing that means a neutral vocabulary in the model translated per writer — the same shape `rename_arguments` already uses — and it moves both readers and both templates at once, which is why it belongs to the type-inference work rather than to a passing edit.
 It is also why every Nextflow input is a `val`: staging a file needs `path`, and choosing `path` from `wdl_type` would act on a type D9 records as wrong for samtools' `region`.
 
 ## Environment
@@ -153,7 +158,7 @@ An earlier revision of this file recorded `cnvlib` as simply "not importable"; t
 ## Current state
 
 The help-text path works end to end for both targets and is covered by tests.
-The argparse path emits valid WDL and Nextflow for a parser with subcommands, switches and multi-value arguments, but still produces duplicate names.
+The argparse path emits WDL and Nextflow with unique names throughout for a parser with subcommands, switches and multi-value arguments; it remains invalid only where an inferred type is wrong, the D9 failure described below.
 Everything below was verified by execution on 2026-08-16 unless dated otherwise.
 
 ### What the help-text reader will and will not handle
@@ -187,8 +192,8 @@ fixtures sit inside it, which is why they were never a sample.
 
 **The argparse reader has no such limits** — it reads a live parser object and needs no text parsing at all.
 `cnvlib.commands.AP`, the README's flagship example, unpacks to 35 tasks under one `version 1.1`.
-Measured on 2026-10-23, after D12 was fixed, 30 of the 35 tasks pass `miniwdl check` when each is checked alone, and the first error the whole document reports is `duplicate keys in meta object`.
-Four of the five failing tasks declare one `dest` twice, so two inputs of one task share a name, and the fifth is `target --avg-size`, a `type=int` option whose default is the float `266.6666666666667`, a D9 matter.
+Measured on 2026-10-23, after D14 and the name collisions were fixed, 34 of the 35 tasks pass `miniwdl check` when each is checked alone.
+The one failure is `target --avg-size`, a `type=int` option whose default is the float `266.6666666666667`, a D9 matter; with that one declaration typed `Float` by hand, the whole document passes.
 
 Switches render faithfully with three deliberate gaps.
 `count`, `store_const` and `append_const` become a Boolean "pass this flag" input, so `-vvv` cannot be expressed; WDL 1.1 has no string repetition, and the expression that emulates it is unreadable in output meant for editing.
@@ -212,15 +217,9 @@ A process with no arguments omits `input:`, because an empty section is a syntax
 Every class a Nextflow script imports by default behaves this way, so the class names are a measured selection rather than a complete set.
 `process`, which the list used to hold, is accepted and runs correctly.
 
-On `cnvlib.commands.AP`, the 35-process Nextflow document has 28 lint errors, every one `is already declared` — the duplicate `dest` defect, not the template.
+On `cnvlib.commands.AP`, the 35-process Nextflow document passes `nextflow lint` with no errors.
 
 ### Open defects
-
-**D14 — task titles can collide across tasks in one document.** `str.title()` lowercases
-interior capitals, so subcommands `runAll` and `runall` both become task `ToolRunall`,
-and `miniwdl` rejects the document with `Multiple tasks named ToolRunall`. Latent until
-now, because a multi-task document was invalid anyway; the D11 fix makes multi-task the
-normal argparse output. Distinct from two arguments of one task sharing a name.
 
 **D9 — type inference is thin and inconsistent.** Concrete evidence in the current output:
 samtools' `region` is a genomic interval, but every positional is typed `File`, so it
@@ -284,8 +283,20 @@ Both bundled help-text fixtures and the flagship `cnvlib.commands.AP` still gene
 **D12** — `RESERVED_WDL_NAMES` held only `scatter`, so a tool with an `--input`, `--output` or `--command` flag generated a task WDL rejects, and the title never went through the rename at all: `Usage: file [-v]` produced `task File`.
 The list is now the WDL 1.1 specification's Reserved Keywords, including `Directory`, `hints` and `requirements`, which the specification says to treat as reserved for a future version.
 That is a superset of what miniwdl 1.15 rejects, since it accepts eight of the 38: `Boolean`, `Object`, `after`, `in`, `version` and the three future ones; the specification governs any other engine that reads the document.
-The title is renamed alongside the arguments in `render_block`, with WDL's one list and with Nextflow's `RESERVED_NF_TITLES`, which holds only `Session`: every capitalized entry of `RESERVED_NF_NAMES` works as a process name, measured with `nextflow lint` and `nextflow run`, while a process named `Session` lints but cannot be called.
+The title is renamed alongside the arguments, now in `render_document`, with WDL's keyword list and with Nextflow's `RESERVED_NF_TITLES`, which holds only `Session`: every capitalized entry of `RESERVED_NF_NAMES` works as a process name, measured with `nextflow lint` and `nextflow run`, while a process named `Session` lints but cannot be called.
 Both bundled help-text fixtures generate byte-identical WDL and Nextflow, verified by checksum; the flagship's WDL changes only where `output` becomes `output_`.
+
+**D14 and the name collisions**, fixed together because both are a name declared twice.
+Nothing deduplicated generated names, and five sources produced duplicates: two help-text tokens that sanitize alike, a keyword rename landing on an existing name, several argparse actions sharing one `dest`, an input taking a name the WDL template declares itself, `output_file`, and two subcommands whose titles coincide.
+`render.render_document` now renders every block, so the one function that sees the whole document makes argument names unique per task and titles unique per document, over the final names: the first holder of a name keeps it, and later ones take `_2`, `_3` and so on.
+`output_file` is passed with the WDL keywords and takes `_`; Nextflow needs no such entry, since `emit:` labels are a namespace of their own, measured with `nextflow lint` and `nextflow run`.
+The docopt reader never gives any argument but the output option, `--output` or `-output`, the name `output_file_name`, because the templates' output sections read it and the first holder of a name need not be the output option.
+Titles were built with `str.title()`, which lowercases interior capitals, so subcommands `runAll` and `runall` both became `ToolRunall`; `tasktree.task_title` capitalizes the same word boundaries and leaves other letters as written, so `SAMtools view` now titles `SAMtoolsView` rather than `SamtoolsView`.
+The argparse reader had never applied the legality rule to titles or `dest` names, so `/usr/bin/tool` titled a task `/Usr/Bin/Tool` and `add_argument("in-file")` declared `in-file`; both readers now share `tasktree.legal_name` and `task_title`.
+Two argparse actions sharing a `dest` are modeled by what they are rather than numbered: a `store_true` and a `store_false` become one switch with a spelling for each value, as a `BooleanOptionalAction` already is, and other actions sharing a `dest`, such as cnvkit's `append_const` statistics flags, are each named after their flag, since the `dest` names the list they build together.
+A switch named after its flag means "pass this flag", so a `store_false` spelled `-q` in such a group becomes an input `q` that passes `-q` when true, rather than one whose name and value disagree.
+None of these flag-named inputs carries its action's default, because argparse fills a shared `dest` from one action's default alone, that of the first action whose default is not `SUPPRESS`; left unset, each passes nothing.
+Both bundled help-text fixtures generate byte-identical WDL and Nextflow, verified by checksum; the flagship's output changes only in `diagram`, `genemetrics`, `gainloss` and `segmetrics`, the four tasks that declared a name twice.
 
 **D8** — `readme` named a non-existent `README.rst`, which setuptools ignores silently, so the wheel shipped with no long description; it now names `README.md`.
 `requires-python` is `>=3.10`: 3.9 reached end of life in October 2025, and 3.10 is the version `[tool.mypy]` checks against.

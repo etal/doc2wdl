@@ -198,6 +198,150 @@ def test_a_title_is_renamed_against_each_languages_own_list(check_wdl, check_nex
     assert "process Session_ {" in nfgen.render([session_task])
 
 
+def test_names_are_unique_after_the_keyword_rename(check_wdl, check_nextflow):
+    """`scatter` becomes `scatter_` in WDL, beside an argument already named that.
+
+    Uniqueness has to be decided over the final names, so a duplicate the rename
+    itself creates is caught, while Nextflow, which keeps `scatter`, renames nothing.
+    """
+    task = one_argument_task("scatter")
+    task["cli_args"].append(Argument(name="scatter_", wdl_type="String"))
+    wdl = wdlgen.render([task])
+    assert "String scatter_\n" in wdl and "String? scatter__2\n" in wdl
+    check_wdl(wdl)
+    nextflow = nfgen.render([task])
+    assert "val scatter\n" in nextflow and "val scatter_\n" in nextflow
+    check_nextflow(nextflow)
+
+
+def test_an_input_may_not_take_a_name_the_template_declares(check_wdl, check_nextflow):
+    """The WDL template declares `output_file`; Nextflow's `emit:` labels do not count."""
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("--output-file")
+    wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
+    assert "String? output_file_\n" in wdl
+    check_wdl(wdl)
+    nextflow = nfgen.render(argparser.unpack_tasks(parser, "tool"))
+    assert "val output_file\n" in nextflow
+    check_nextflow(nextflow)
+
+
+def test_the_output_option_keeps_the_name_the_template_reads(check_wdl, wdl_command):
+    """`--output` owns `output_file_name` even when a flag spelling it comes first.
+
+    Were the first holder of the name to keep it, the output section would name the
+    file `--output-file-name` received, and every checker would accept that.
+    """
+    help_text = (
+        "Usage: tool [options]\n\n"
+        "Options:\n"
+        "  --output-file-name NAME  Name to record.\n"
+        "  --output FILE            Where to write.\n"
+    )
+    wdl = wdlgen.render([docopter.transform(*docopter.parse(help_text))])
+    check_wdl(wdl)
+    assert wdl_command(wdl, output_file_name="o.txt") == "tool --output o.txt"
+    assert wdl_command(wdl, output_file_name_="n") == "tool --output-file-name n"
+
+
+def test_subcommands_differing_in_case_or_punctuation_name_distinct_tasks(
+    check_wdl, check_nextflow
+):
+    """Capitalization survives into the title, and a remaining duplicate is numbered."""
+    parser = argparse.ArgumentParser(prog="tool")
+    subparsers = parser.add_subparsers()
+    for name in ("runAll", "runall", "run-all"):
+        subparsers.add_parser(name).add_argument("infile")
+    wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
+    titles = [line for line in wdl.splitlines() if line.startswith("task ")]
+    assert titles == ["task ToolRunAll {", "task ToolRunall {", "task ToolRunAll_2 {"]
+    check_wdl(wdl)
+    check_nextflow(nfgen.render(argparser.unpack_tasks(parser, "tool")))
+
+
+@pytest.mark.parametrize(
+    "prog, title",
+    [
+        ("9x", "Task9X"),
+        ("_x", "Task_X"),
+        ("a.b", "A_B"),
+        ("/usr/bin/tool", "UsrBinTool"),
+        ("-", "Task"),
+        # A letter `legal_name` drops leaves the next one at a word boundary, so the
+        # title is not the Groovy keyword `def`.
+        ("ñdef", "Def"),
+    ],
+)
+def test_an_argparse_title_is_a_legal_identifier(
+    check_wdl, check_nextflow, prog, title
+):
+    """The argparse reader names a task by the rule the help-text reader uses."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("infile")
+    (task,) = argparser.unpack_tasks(parser, prog)
+    help_task = docopter.transform(*docopter.parse(f"Usage: {prog} <infile>\n"))
+    assert task["title"] == help_task["title"] == title
+    check_wdl(wdlgen.render([task]))
+    check_nextflow(nfgen.render([task]))
+
+
+def test_argparse_destinations_become_legal_identifiers(check_wdl, wdl_command):
+    """argparse accepts a `dest` no target language accepts as a name."""
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("in-file")
+    parser.add_argument("--fast", dest="a.b", action="store_true")
+    wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
+    check_wdl(wdl)
+    assert wdl_command(wdl, in_file="x", a_b=True) == "tool x --fast"
+
+
+def test_a_switch_split_over_two_actions_renders_as_one(check_wdl, wdl_command):
+    """`--x` and `--no-x` storing one `dest` are one input, not two named alike."""
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("--squash", action="store_true", default=True)
+    parser.add_argument("--no-squash", dest="squash", action="store_false")
+    wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
+    check_wdl(wdl)
+    assert wdl_command(wdl) == "tool --squash"
+    assert wdl_command(wdl, squash=False) == "tool --no-squash"
+
+
+def test_flags_sharing_a_destination_are_named_by_flag(check_wdl, check_nextflow):
+    """Each `append_const` flag is passed on its own, so each needs its own input."""
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    for flag in ("--mean", "--median", "--t-test"):
+        parser.add_argument(flag, dest="stats", action="append_const", const=flag)
+    wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
+    assert command_block(wdl)[1:] == [
+        '~{if mean then "--mean" else ""} \\',
+        '~{if median then "--median" else ""} \\',
+        '~{if t_test then "--t-test" else ""} \\',
+    ]
+    check_wdl(wdl)
+    check_nextflow(nfgen.render(argparser.unpack_tasks(parser, "tool")))
+
+
+def test_a_switch_named_by_its_flag_passes_that_flag_when_true(wdl_command):
+    """A name taken from a flag must mean that flag, whichever value it stores.
+
+    `-q` storing False into `verbosity` is an input `q`, and `q = true` asks for
+    quiet; a `BooleanOptionalAction` is named by its affirmative spelling.  No
+    flag passes by default: argparse fills `verbosity` from the first action's
+    default, so the later `default=True` never reaches the tool.
+    """
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("-v", dest="verbosity", action="count", default=0)
+    parser.add_argument("-q", dest="verbosity", action="store_false")
+    parser.add_argument(
+        "--color", dest="verbosity", action=argparse.BooleanOptionalAction, default=True
+    )
+    parser.add_argument("--loud", dest="verbosity", action="store_true", default=True)
+    wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
+    assert wdl_command(wdl) == "tool"
+    assert wdl_command(wdl, q=True) == "tool -q"
+    assert wdl_command(wdl, v=True, color=False) == "tool -v --no-color"
+
+
 def switch_parser():
     """One option of each valueless kind argparse offers, and nothing else."""
     parser = argparse.ArgumentParser(prog="tool", add_help=False)

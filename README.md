@@ -51,9 +51,8 @@ Known issues
 
 - Type inference is thin.
   Every positional argument read from help text is typed `File`, which is wrong for a positional that is not a path — samtools' `region` is a genomic interval, not a file — and an option that takes no value is typed `String` rather than `Boolean` there.
-- Option help text does not reach `param_meta` when reading help text; the argparse
+- Option help text does not reach `parameter_meta` when reading help text; the argparse
   reader does carry it through.
-- Two `argparse` arguments sharing one `dest` produce a duplicate input, which both languages reject.
 - A `count` option such as `-v` becomes a Boolean, so the generated task can pass it at most once.
 
 Reading help text is best-effort by nature, and the limits are measured rather than
@@ -68,4 +67,5 @@ or the same flag appears both bare and with a value, the result is a warning and
 task rather than a complete one.
 
 None of that applies to the `argparse` subcommand, which introspects the parser object directly and parses no text.
-It is the better route for a Python tool in principle, but not yet in practice: it emits one document for a parser with subcommands, but the duplicate-name defect listed above still makes that document invalid for some real parsers, so check its output before trusting it.
+It is the better route for a Python tool: it emits one document for a parser with subcommands.
+Its inferred types still follow each argument's declared `type`, so an `int` option whose default is a float produces a declaration WDL rejects; check the output before trusting it.

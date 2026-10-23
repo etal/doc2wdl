@@ -6,12 +6,11 @@ tree and inspected statically.  Nothing here ever matches the text against
 """
 
 import itertools
-import re
 import sys
 from dataclasses import dataclass
 
 from . import _docopt as docopt
-from .tasktree import Argument, type_and_default
+from .tasktree import Argument, legal_name, task_title, type_and_default
 
 # Options that describe the wrapped tool's own interface rather than its inputs.
 # A WDL task expresses these through meta{} instead, so they are not task inputs.
@@ -110,12 +109,7 @@ def transform(usage, positionals, options):
               stdout as its output.
     """
     cli_prefix = " ".join(_command_words(usage))
-    # `.title()` runs before filtering, so that word boundaries the filter is about
-    # to remove still capitalize: `cnvkit.py antitarget` -> `CnvkitAntitarget`.
-    title = _legal_name(
-        cli_prefix.replace(".py", "").title().replace(" ", "").replace("-", ""),
-        prefix="Task",
-    )
+    title = task_title(cli_prefix)
 
     cli_args = [
         Argument(
@@ -191,26 +185,19 @@ def _command_words(usage):
     return tokens[:1] + list(itertools.takewhile(_is_command_word, tokens[1:]))
 
 
-def _legal_name(name, prefix):
-    """Keep only the characters a target language accepts, and start with a letter.
-
-    WDL requires an identifier to begin with a LETTER: a leading underscore is
-    rejected exactly as a leading digit is, so the prefix has to be a real word.
-    Applied on the reader side because a name legal in WDL is also legal in Groovy,
-    which keeps one rule rather than one per writer.
-    """
-    kept = re.sub(r"[^A-Za-z0-9_]", "", re.sub(r"[-.]", "_", name))
-    return kept if kept[:1].isalpha() else prefix + kept
-
-
 def _identifier(token):
     """Turn a usage token such as ``<in.bam>`` or ``--min-size`` into an identifier.
 
     Help text carries punctuation that no target language accepts in a name, and it
     is not a closed set -- `FILE(S)`, `<a/b>` and `<n,m>` all occur -- so this keeps
     what is legal rather than removing what is known to be illegal.
+
+    `OUTPUT_FILE_NAME` is never returned: it belongs to the output option, `--output`
+    or `-output` taking a value, whose input the templates' output sections name,
+    and no other argument may take it.
     """
-    return _legal_name(token.lstrip("-").strip("<>"), prefix="arg_")
+    name = legal_name(token.lstrip("-").strip("<>"), prefix="arg_")
+    return name + "_" if name == OUTPUT_FILE_NAME else name
 
 
 def _parse_positionals(printable, usage, options):
