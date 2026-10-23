@@ -14,11 +14,9 @@ EXAMPLES = ["cnvkit-antitarget", "samtools-view"]
 def two_subcommand_parser():
     """An ArgumentParser shaped like the one the argparse path has never handled.
 
-    Deliberately narrow.  Its argument names avoid WDL keywords, because the
-    reserved-word list is a separate open defect: a fixture that tripped it would
-    make this test fail for reasons it is not about.  What it does exercise is
-    a parser with two subcommands -- so the document carries two tasks -- and a
-    multi-line description, so the usage prose cannot be commented by accident.
+    Deliberately narrow.  It exercises a parser with two subcommands -- so the
+    document carries two tasks -- and a multi-line description, so the usage prose
+    cannot be commented by accident.
     """
     parser = argparse.ArgumentParser(description="Parent tool.", epilog="Epilog.")
     subparsers = parser.add_subparsers()
@@ -161,6 +159,43 @@ def test_nextflow_renames_groovy_keywords(check_nextflow):
     nextflow = nfgen.render([one_argument_task("new")])
     assert "val new_\n" in nextflow
     check_nextflow(nextflow)
+
+
+def test_wdl_keywords_are_renamed_but_their_flags_are_not(check_wdl, wdl_command):
+    """`--input`, `--output` and `--command` are ordinary flags and WDL keywords.
+
+    Only the input's name takes the suffix; the command line still spells the
+    tool's own flag.  `in` and `version` are reserved by the specification although
+    miniwdl accepts them.
+    """
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    for flag in ("--input", "--output", "--command", "--task", "--in", "--version"):
+        parser.add_argument(flag)
+    wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
+    check_wdl(wdl)
+    for name in ("input_", "output_", "command_", "task_", "in_", "version_"):
+        assert f"String? {name}\n" in wdl
+    assert (
+        wdl_command(wdl, output_="o.txt", task_="t", version_="2")
+        == "tool --output o.txt --task t --version 2"
+    )
+
+
+def test_a_title_is_renamed_against_each_languages_own_list(check_wdl, check_nextflow):
+    """A program name can title-case onto a keyword, as `file` becomes `File`.
+
+    WDL forbids the same words for a task as for an input, while Nextflow accepts a
+    process named `File` and cannot call one named `Session`.
+    """
+    file_task = docopter.transform(*docopter.parse("Usage: file [-v]\n"))
+    wdl = wdlgen.render([file_task])
+    assert "task File_ {" in wdl
+    check_wdl(wdl)
+    nextflow = nfgen.render([file_task])
+    assert "process File {" in nextflow
+    check_nextflow(nextflow)
+    session_task = docopter.transform(*docopter.parse("Usage: session <x>\n"))
+    assert "process Session_ {" in nfgen.render([session_task])
 
 
 def switch_parser():

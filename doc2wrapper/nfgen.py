@@ -21,6 +21,11 @@ Boolean Byte Character Double Float Integer Long Number Short String Object Math
 Process Runtime Thread Collection List Map Set Date File Path Duration MemoryUnit
 """.split()
 
+# Process names are a different position: every capitalized name above lints and
+# runs as a process name.  `Session` lints, but `nextflow run` cannot call a process
+# of that name ("Missing process or function call"), measured on the same release.
+RESERVED_NF_TITLES = ["Session"]
+
 
 def render(tasks):
     """Render a Nextflow script wrapping one process per given set of values.
@@ -35,7 +40,12 @@ def render(tasks):
     return render_document(
         "document_template.nf",
         [
-            render_block("process_template.nf", RESERVED_NF_NAMES, task)
+            render_block(
+                "process_template.nf",
+                reserved=RESERVED_NF_NAMES,
+                reserved_titles=RESERVED_NF_TITLES,
+                template_kwargs=task,
+            )
             for task in tasks
         ],
     )

@@ -31,6 +31,9 @@ Usage
 The generated wrapper will very likely need further editing to work well, but hopefully this
 approach will save you some time over writing each task from scratch.
 
+An argument whose name the target language reserves takes a trailing underscore, as `--output` becomes the WDL input `output_`, and the command line still passes the tool's own flag.
+Task names are checked against a separate list per language, so a tool named `file` becomes the WDL task `File_` but keeps the Nextflow process name `File`.
+
 A Nextflow process input cannot be left out, and passing null fails the run, so a generated process expects `''` for an option or switch left unset and `[]` for a list with no values; the flag is then omitted and the tool's own default applies.
 Every input is a `val`, so a file input is passed as a path string rather than staged; change it to `path` by hand where staging is wanted.
 
@@ -50,8 +53,8 @@ Known issues
   Every positional argument read from help text is typed `File`, which is wrong for a positional that is not a path — samtools' `region` is a genomic interval, not a file — and an option that takes no value is typed `String` rather than `Boolean` there.
 - Option help text does not reach `param_meta` when reading help text; the argparse
   reader does carry it through.
-- The `argparse` subcommand does not sanitize argument names against WDL's keywords, so a parser with an `--output` option emits `String? output`, which WDL rejects, and two arguments sharing one `dest` produce a duplicate input.
-  A `count` option such as `-v` becomes a Boolean, so the generated task can pass it at most once.
+- Two `argparse` arguments sharing one `dest` produce a duplicate input, which both languages reject.
+- A `count` option such as `-v` becomes a Boolean, so the generated task can pass it at most once.
 
 Reading help text is best-effort by nature, and the limits are measured rather than
 guessed. Over a corpus of 36 help texts, 34 of them captured from real tools, positional
@@ -65,4 +68,4 @@ or the same flag appears both bare and with a value, the result is a warning and
 task rather than a complete one.
 
 None of that applies to the `argparse` subcommand, which introspects the parser object directly and parses no text.
-It is the better route for a Python tool in principle, but not yet in practice: it now emits one valid document for a parser with subcommands, but the keyword and duplicate-name defects listed above still make that document invalid for many real parsers, so check its output before trusting it.
+It is the better route for a Python tool in principle, but not yet in practice: it emits one document for a parser with subcommands, but the duplicate-name defect listed above still makes that document invalid for some real parsers, so check its output before trusting it.

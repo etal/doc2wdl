@@ -1,6 +1,6 @@
 """Shared Jinja2 plumbing for the target-language writers.
 
-Each writer keeps its own module, templates and reserved-word list, because that is
+Each writer keeps its own module, templates and reserved-word lists, because that is
 what "adding a target language means adding a writer plus a template" is supposed to
 cost. What it should not also cost is a copy of the environment setup and of the
 reasoning below, which is how the two existing writers came to be twenty-odd
@@ -9,7 +9,8 @@ byte-identical lines apart.
 A writer needing different environment settings should stop calling this and build
 its own, rather than growing this one a parameter.  Per-language *data* is a
 different matter and already flows through as arguments: the template name and the
-reserved-word list are how a writer says what its target language wants.
+reserved-word lists, one for argument names and one for task names, are how a writer
+says what its target language wants.
 
 Rendering happens at two levels because a document is not a task.  Statements such
 as WDL's `version` or Nextflow's shebang may appear once per document, so they
@@ -20,7 +21,7 @@ came to carry two version statements.
 
 import jinja2
 
-from .tasktree import rename_reserved
+from .tasktree import rename_if_reserved, rename_reserved
 
 
 def _environment():
@@ -44,12 +45,15 @@ def _environment():
     )
 
 
-def render_block(template_name, reserved, template_kwargs):
+def render_block(template_name, reserved, reserved_titles, template_kwargs):
     """Render one task or process from the populated object model.
 
     Args:
         template_name: file name within `doc2wrapper/templates/`
-        reserved: words the target language will not accept as identifiers
+        reserved: words the target language will not accept as argument names
+        reserved_titles: words it will not accept as a task or process name, which
+            need not be the same set: Nextflow resolves an input named `File` to a
+            class, yet accepts a process of that name
         template_kwargs: dict carrying title, usage, cli_prefix, cli_args and
             has_output_file
 
@@ -64,6 +68,7 @@ def render_block(template_name, reserved, template_kwargs):
     return template.render(
         **{
             **template_kwargs,
+            "title": rename_if_reserved(template_kwargs["title"], reserved_titles),
             "cli_args": rename_reserved(template_kwargs["cli_args"], reserved),
         }
     )

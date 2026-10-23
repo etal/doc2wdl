@@ -5,8 +5,17 @@ from dataclasses import replace
 
 from .render import render_block, render_document
 
+# The WDL 1.1 specification's Reserved Keywords, including the three it says to treat
+# as reserved for a future version.  WDL is case-sensitive, so `Object` and `object`
+# are separate entries.  miniwdl 1.15 rejects 30 of these as names and accepts the
+# rest: `Boolean`, `Object`, `after`, `in`, `version` and the three future ones.  The
+# specification is what another engine reads the `version 1.1` document against.
+# Task names and declaration names share the rule, so one list serves both.
 RESERVED_WDL_NAMES = """
-scatter
+Array Boolean File Float Int Map None Object Pair String
+alias after as call command else false if in import input left meta object output
+parameter_meta right runtime scatter struct task then true version workflow
+Directory hints requirements
 """.split()
 
 _ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
@@ -25,7 +34,12 @@ def render(tasks):
     return render_document(
         "document_template.wdl",
         [
-            render_block("task_template.wdl", RESERVED_WDL_NAMES, _spelled(task))
+            render_block(
+                "task_template.wdl",
+                reserved=RESERVED_WDL_NAMES,
+                reserved_titles=RESERVED_WDL_NAMES,
+                template_kwargs=_spelled(task),
+            )
             for task in tasks
         ],
     )

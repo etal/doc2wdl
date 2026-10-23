@@ -57,7 +57,8 @@ doc2wrapper/
   tasktree.py    MODEL: the `Argument` dataclass and the helpers keyed on it
   wdlgen.py      WRITER: object model -> WDL; owns RESERVED_WDL_NAMES and the spelling
                  of Python values as WDL literals
-  nfgen.py       WRITER: object model -> Nextflow; owns RESERVED_NF_NAMES
+  nfgen.py       WRITER: object model -> Nextflow; owns RESERVED_NF_NAMES and
+                 RESERVED_NF_TITLES
   render.py      Jinja2 environment shared by the writers, at two levels:
                  `render_block` for one task, `render_document` for the whole file.
                  A writer needing different settings should build its own
@@ -73,7 +74,8 @@ The dict carries `title`, `usage`, `cli_prefix`, `cli_args` (a list of `Argument
 Adding a target language should mean adding a writer plus a template, nothing else; adding an input format should mean adding a reader.
 If a change forces a reader to know about WDL, the abstraction has been breached.
 Three consequences are enforced.
-First, name sanitization against a language's reserved words happens in the **writer** (`tasktree.rename_reserved`, called with `RESERVED_WDL_NAMES` or `RESERVED_NF_NAMES`).
+First, name sanitization against a language's reserved words happens in the **writer**: `render.render_block` renames arguments with `tasktree.rename_reserved` and the title with `tasktree.rename_if_reserved`, each against a list the writer passes.
+Arguments and titles take separate lists because the positions differ in Nextflow: an input named `File` resolves to a class, while a process named `File` works.
 Second, `type_and_default` lives in `tasktree` rather than in either writer.
 Third, `Argument.default_value` and `Argument.doc` hold Python values and plain text, never target-language syntax; `wdlgen` spells them as WDL literals on copies of the arguments, the same shape `rename_reserved` uses, so the shared Jinja2 environment carries no per-language filter.
 
@@ -151,7 +153,7 @@ An earlier revision of this file recorded `cnvlib` as simply "not importable"; t
 ## Current state
 
 The help-text path works end to end for both targets and is covered by tests.
-The argparse path emits valid WDL and Nextflow for a parser with subcommands, switches and multi-value arguments, but still collides with WDL keywords and duplicate names.
+The argparse path emits valid WDL and Nextflow for a parser with subcommands, switches and multi-value arguments, but still produces duplicate names.
 Everything below was verified by execution on 2026-08-16 unless dated otherwise.
 
 ### What the help-text reader will and will not handle
@@ -185,9 +187,8 @@ fixtures sit inside it, which is why they were never a sample.
 
 **The argparse reader has no such limits** — it reads a live parser object and needs no text parsing at all.
 `cnvlib.commands.AP`, the README's flagship example, unpacks to 35 tasks under one `version 1.1`.
-Measured on 2026-10-22, after D3, D6, D15 and D16 were fixed, the first error `miniwdl check` reports on that document is **D12**, at `String? output`.
-With a complete WDL keyword list substituted as a probe, 30 of the 35 tasks check.
-Four of the remaining five declare one `dest` twice, so two inputs of one task share a name, and the fifth is `target --avg-size`, a `type=int` option whose default is the float `266.6666666666667`, a D9 matter.
+Measured on 2026-10-23, after D12 was fixed, 30 of the 35 tasks pass `miniwdl check` when each is checked alone, and the first error the whole document reports is `duplicate keys in meta object`.
+Four of the five failing tasks declare one `dest` twice, so two inputs of one task share a name, and the fifth is `target --avg-size`, a `type=int` option whose default is the float `266.6666666666667`, a D9 matter.
 
 Switches render faithfully with three deliberate gaps.
 `count`, `store_const` and `append_const` become a Boolean "pass this flag" input, so `-vvv` cannot be expressed; WDL 1.1 has no string repetition, and the expression that emulates it is unreadable in output meant for editing.
@@ -236,11 +237,7 @@ it, so retaining it is a small change in a file we now own. The argparse reader 
 positional spellings, so only the option descriptions are missing.
 
 Smaller known wrongness, low priority: help-text notation leaks into flags, so
-samtools' `--region[s]-file FILE` becomes a literal flag `--region[s]-file`. Not low
-priority any more, though it is still small: **D12**, `RESERVED_WDL_NAMES` holding one
-entry against roughly thirty WDL 1.1 keywords, is what now blocks the argparse path.
-A parser with a `--output` option renders `String? output`, and
-`miniwdl` rejects it with `unexpected keyword output`.
+samtools' `--region[s]-file FILE` becomes a literal flag `--region[s]-file`.
 
 ### Resolved
 
@@ -283,6 +280,12 @@ Flags are spelled in single-quoted Groovy strings, in which `$` and `"` are plai
 `nextflow.enable.dsl=2` is gone from the document template, because 25.10 supports only DSL2 and the statement selected nothing.
 `check_nextflow` used to count a launcher failure under an unsupported Java as a lint rejection, which a strict xfail then reported as expected; that xfail is gone, and a session probe skips instead.
 Both bundled help-text fixtures and the flagship `cnvlib.commands.AP` still generate byte-identical WDL, verified by checksum.
+
+**D12** — `RESERVED_WDL_NAMES` held only `scatter`, so a tool with an `--input`, `--output` or `--command` flag generated a task WDL rejects, and the title never went through the rename at all: `Usage: file [-v]` produced `task File`.
+The list is now the WDL 1.1 specification's Reserved Keywords, including `Directory`, `hints` and `requirements`, which the specification says to treat as reserved for a future version.
+That is a superset of what miniwdl 1.15 rejects, since it accepts eight of the 38: `Boolean`, `Object`, `after`, `in`, `version` and the three future ones; the specification governs any other engine that reads the document.
+The title is renamed alongside the arguments in `render_block`, with WDL's one list and with Nextflow's `RESERVED_NF_TITLES`, which holds only `Session`: every capitalized entry of `RESERVED_NF_NAMES` works as a process name, measured with `nextflow lint` and `nextflow run`, while a process named `Session` lints but cannot be called.
+Both bundled help-text fixtures generate byte-identical WDL and Nextflow, verified by checksum; the flagship's WDL changes only where `output` becomes `output_`.
 
 **D8** — `readme` named a non-existent `README.rst`, which setuptools ignores silently, so the wheel shipped with no long description; it now names `README.md`.
 `requires-python` is `>=3.10`: 3.9 reached end of life in October 2025, and 3.10 is the version `[tool.mypy]` checks against.

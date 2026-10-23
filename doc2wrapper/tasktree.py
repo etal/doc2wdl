@@ -104,6 +104,10 @@ def rename_reserved(cli_args, reserved):
     writer may render the same model afterwards.
     """
     return [
-        replace(arg, name=arg.name + "_") if arg.name in reserved else arg
-        for arg in cli_args
+        replace(arg, name=rename_if_reserved(arg.name, reserved)) for arg in cli_args
     ]
+
+
+def rename_if_reserved(name, reserved):
+    """Suffix one identifier if the target language will not accept it as a name."""
+    return name + "_" if name in reserved else name
