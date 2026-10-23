@@ -7,7 +7,11 @@ import sys
 
 from . import argparser
 from . import docopter
+from . import nfgen
 from . import wdlgen
+
+#: The dispatch table and the `--target` choices at once, so the two cannot drift.
+WRITERS = {"wdl": wdlgen.render, "nextflow": nfgen.render}
 
 
 def main():
@@ -20,7 +24,22 @@ def main():
         help="Sub-commands (use with -h for more info)"
     )
 
-    sp_argparse = ap_subparsers.add_parser("argparse", help=cmd_argparse.__doc__)
+    # What to write is independent of what is read, so every subcommand shares it.
+    ap_common = argparse.ArgumentParser(add_help=False)
+    ap_common.add_argument(
+        "-t",
+        "--target",
+        choices=WRITERS,
+        default="wdl",
+        help="Workflow language to generate. [Default: %(default)s]",
+    )
+    ap_common.add_argument(
+        "-o", "--output", type=argparse.FileType("wt"), default=sys.stdout
+    )
+
+    sp_argparse = ap_subparsers.add_parser(
+        "argparse", parents=[ap_common], help=cmd_argparse.__doc__
+    )
     sp_argparse.add_argument(
         "-m",
         "--module",
@@ -33,12 +52,11 @@ def main():
         help="""Name of the argument parser object (ArgumentParser instance)
                 in the specified module.""",
     )
-    sp_argparse.add_argument(
-        "-o", "--output", type=argparse.FileType("wt"), default=sys.stdout
-    )
     sp_argparse.set_defaults(func=cmd_argparse)
 
-    sp_docopt = ap_subparsers.add_parser("docopt", help=cmd_docopt.__doc__)
+    sp_docopt = ap_subparsers.add_parser(
+        "docopt", parents=[ap_common], help=cmd_docopt.__doc__
+    )
     sp_docopt.add_argument(
         "-f",
         "--filename",
@@ -46,9 +64,6 @@ def main():
         default=sys.stdin,
         help="""Text file containing a CLI command's help text, e.g. from '-h'.
                 [Default: read from standard input]""",
-    )
-    sp_docopt.add_argument(
-        "-o", "--output", type=argparse.FileType("wt"), default=sys.stdout
     )
     sp_docopt.set_defaults(func=cmd_docopt)
 
@@ -66,9 +81,9 @@ def cmd_argparse(args):
 
     tasks = list(argparser.unpack_tasks(parser_obj, prog))
     # A parser carrying nothing but --help yields no tasks, and a document with no
-    # tasks is still valid WDL, so silence here would look like success.
+    # tasks is still valid in either language, so silence here would look like success.
     print(f"Unpacked {len(tasks)} task(s) from {args.parser}.", file=sys.stderr)
-    args.output.write(wdlgen.render(tasks))
+    args.output.write(WRITERS[args.target](tasks))
     return 0
 
 
@@ -88,7 +103,7 @@ def cmd_docopt(args):
         file=sys.stderr,
     )
     task = docopter.transform(usage, positionals, options)
-    args.output.write(wdlgen.render([task]))
+    args.output.write(WRITERS[args.target]([task]))
     return 0
 
 

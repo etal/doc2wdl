@@ -103,10 +103,7 @@ def test_every_declared_input_reaches_the_command_line(
 
     An input that is declared but never interpolated produces a wrapper that parses,
     runs, and quietly ignores the argument -- which is what both templates did to
-    every positional. This asserts on text, so it needs neither checker installed,
-    and it deliberately covers the Nextflow writer even while its output is still
-    invalid: the natural fix for that invalidity is a ternary that lints clean and
-    drops the positionals all over again.
+    every positional. This asserts on text, so it needs neither checker installed.
     """
     task = docopter.transform(*docopter.parse(help_text(example)))
     lines = block(render([task]))
@@ -138,20 +135,32 @@ def test_repeated_positional_is_joined_as_an_array(help_text):
     assert '~{sep(" ", region)}' in wdl
 
 
-def test_reserved_words_are_renamed_per_target_language(check_wdl):
-    """Renaming lives in the writer because the reserved set differs per language."""
-    task = dict(
+def one_argument_task(name, usage="demo"):
+    """Template keywords for a task taking one required positional argument."""
+    return dict(
         title="Demo",
-        usage="demo",
+        usage=usage,
         cli_prefix="demo",
-        cli_args=[Argument(name="scatter", wdl_type="String", is_required=True)],
+        cli_args=[Argument(name=name, wdl_type="String", is_required=True)],
         has_output_file=False,
     )
+
+
+def test_reserved_words_are_renamed_per_target_language(check_wdl):
+    """Renaming lives in the writer because the reserved set differs per language."""
+    task = one_argument_task("scatter")
     wdl = wdlgen.render([task])
     assert "String scatter_" in wdl
     check_wdl(wdl)
     # The Nextflow writer applies its own list, so the WDL keyword is left alone.
     assert "val scatter\n" in nfgen.render([task])
+
+
+def test_nextflow_renames_groovy_keywords(check_nextflow):
+    """`nextflow lint` rejects a Groovy keyword as an input name."""
+    nextflow = nfgen.render([one_argument_task("new")])
+    assert "val new_\n" in nextflow
+    check_nextflow(nextflow)
 
 
 def switch_parser():
@@ -202,12 +211,83 @@ def test_a_switch_follows_its_value_rather_than_its_presence(switch_wdl, wdl_com
     assert wdl_command(switch_wdl, verbose=True, mode=True) == "tool --verbose --fast"
 
 
-def test_nextflow_switches_render_one_spelling_per_value():
-    """The Nextflow template reads `false_flag` too; no checker runs on it yet."""
-    script = script_block(nfgen.render(argparser.unpack_tasks(switch_parser(), "tool")))
-    assert '${ loud ? "--loud" : "" } \\' in script
-    assert '${ check ? "" : "--no-check" } \\' in script
-    assert '${ color ? "--color" : "--no-color" } \\' in script
+def test_nextflow_switches_render_one_spelling_per_value(check_nextflow):
+    """A switch naming its false state stays silent for `''`, the unset value.
+
+    Groovy truth reads `''` as false, so a plain ternary renders the negation, or a
+    `store_false` flag, for a switch the caller meant to leave alone.
+    """
+    nextflow = nfgen.render(argparser.unpack_tasks(switch_parser(), "tool"))
+    check_nextflow(nextflow)
+    script = script_block(nextflow)
+    assert "${ loud ? '--loud' : '' } \\" in script
+    assert "${ check == true ? '' : check == false ? '--no-check' : '' } \\" in script
+    assert (
+        "${ color == true ? '--color' : color == false ? '--no-color' : '' } \\"
+        in script
+    )
+
+
+def test_nextflow_command_line_follows_the_inputs(check_nextflow, nextflow_commands):
+    """Unset inputs leave no trace, and set ones render even when Groovy reads them
+    as false.
+
+    The caller spells an unset input `''` or `[]`, since passing null fails the run.
+    Testing `x ?` instead of `x != ''` drops `--num 0`, and the previous
+    `"--num " + x` rendered an unset option as `--num null`.  Each multi-value form
+    is checked against its argparse action, as for WDL, and `--req` takes the arm
+    for a required value option.  `-v` guards the `append` arm: a closure parameter
+    named `v` would collide with an input named `v`, which is why that arm joins
+    instead, and an input named `task` would render the implicit task map unless
+    renamed.
+    """
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("inputs", nargs="*")
+    parser.add_argument("--num", type=int)
+    parser.add_argument("--color", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--no-check", action="store_false", dest="check")
+    parser.add_argument("-v", action="append")
+    parser.add_argument("--files", nargs="+")
+    parser.add_argument("--pair", nargs=2, required=True)
+    parser.add_argument("--req", required=True)
+    parser.add_argument("--task")
+    nextflow = nfgen.render(argparser.unpack_tasks(parser, "tool"))
+    check_nextflow(nextflow)
+    assert nextflow_commands(
+        nextflow,
+        [[], "", "", "", [], [], ["p", "q"], "r", ""],
+        [["x", "y"], 0, False, False, ["a", "b"], ["f", "g"], ["p", "q"], "s", "t"],
+        [["x"], 3, True, True, ["a"], ["f"], ["p", "q"], "r", ""],
+    ) == {
+        "tool --pair p q --req r",
+        "tool x y --num 0 --no-color --no-check -v a -v b --files f g --pair p q"
+        " --req s --task t",
+        "tool x --num 3 --color -v a --files f --pair p q --req r",
+    }
+
+
+def test_nextflow_comments_survive_comment_syntax_in_help_text(check_nextflow):
+    """Captured help text is commented per line, so it cannot close its comment.
+
+    A `/* ... */` block ended at the first `*/` in the text and left the rest of
+    it to be parsed as Nextflow.
+    """
+    usage = 'demo FILE\nsee */path/glob for details, or """ and ${x}'
+    check_nextflow(nfgen.render([one_argument_task("infile", usage)]))
+
+
+def test_a_process_without_arguments_declares_no_inputs(check_nextflow):
+    """An empty `input:` section is a syntax error, unlike WDL's empty `input {}`.
+
+    Help text offering nothing but `--help` reaches the writer this way.
+    """
+    doc = "Usage: tool [-h]\n\nOptions:\n  -h, --help  Show this help.\n"
+    task = docopter.transform(*docopter.parse(doc))
+    assert task["cli_args"] == []
+    nextflow = nfgen.render([task])
+    assert "process Tool {" in nextflow
+    assert "input:" not in nextflow
+    check_nextflow(nextflow)
 
 
 def test_multi_value_arguments_are_arrays_spelled_per_action(check_wdl, wdl_command):
@@ -306,17 +386,21 @@ def test_text_survives_as_a_wdl_string_literal(check_wdl, wdl_task):
     assert default.value == AWKWARD_TEXT
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the Nextflow writer is unreachable from the CLI and its template is "
-    "still an adaptation of the WDL one: the output declaration is not valid "
-    'Nextflow, and `${"-f " + x}` renders `-f null` rather than eliding an unset '
-    "flag. `nextflow lint` reports only the first error, so fixing one cause will "
-    "not make this pass",
-)
 @pytest.mark.parametrize("example", EXAMPLES)
 def test_generated_nextflow_is_accepted_by_nextflow_lint(
     help_text, check_nextflow, example
 ):
+    """Both fixtures take `--output`, so each process also declares that file.
+
+    Without `optional: true`, an unset name makes that output emit an empty list in
+    place of a file; with it, the output emits nothing and `stdout` carries the
+    result.
+    """
     task = docopter.transform(*docopter.parse(help_text(example)))
-    check_nextflow(nfgen.render([task]))
+    assert task["has_output_file"]
+    nextflow = nfgen.render([task])
+    check_nextflow(nextflow)
+    assert (
+        'path "${output_file_name}", emit: output_file, optional: true\n'
+        "    stdout emit: stdout\n"
+    ) in nextflow

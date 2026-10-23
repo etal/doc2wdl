@@ -6,6 +6,8 @@ checker is a Python dependency of this package; when one is missing its tests sk
 rather than fail, so the suite stays runnable on a bare checkout.
 """
 
+import os
+import re
 import shutil
 import subprocess
 
@@ -59,19 +61,97 @@ def check_wdl(tmp_path):
     return check
 
 
+@pytest.fixture(scope="session")
+def nextflow_launches():
+    """Skip unless the `nextflow` launcher itself starts.
+
+    The launcher refuses an unsupported Java -- 25.10 accepts 17 to 25 -- with exit
+    status 1, which is also the status of a lint rejection, so without this probe a
+    test expecting a rejection would pass for the wrong reason.  `-version` lints
+    nothing, so its failure can only be the launcher's.
+    """
+    if shutil.which("nextflow") is None:
+        pytest.skip("nextflow is not installed")
+    done = subprocess.run(
+        ["nextflow", "-version"], capture_output=True, text=True, check=False
+    )
+    if done.returncode != 0:
+        pytest.skip(f"nextflow cannot start: {done.stderr.strip()}")
+
+
 @pytest.fixture
-def check_nextflow(tmp_path):
-    """Assert that a Nextflow script is accepted by `nextflow lint`."""
+def check_nextflow(tmp_path, nextflow_launches):
+    """Assert that `nextflow lint` accepts a Nextflow script without warnings.
+
+    A warning still exits 0, and lint warns about syntax slated for removal, such as
+    the implicit closure parameter `it`.
+    """
 
     def check(source):
         done, path = _run_checker("nextflow", ["lint"], source, tmp_path, ".nf")
-        assert done.returncode == 0, (
-            f"nextflow lint rejected the generated script:\n"
+        warned = any(line.startswith("Warn ") for line in done.stdout.splitlines())
+        assert done.returncode == 0 and not warned, (
+            f"nextflow lint rejected or warned about the generated script:\n"
             f"{done.stdout}{done.stderr}\n--- generated ---\n{source}"
         )
         return path
 
     return check
+
+
+def _groovy(value):
+    """Spell a JSON-compatible Python value, other than None, as a Groovy literal.
+
+    The caller spells an unset input `''` or `[]`, so None has no use here.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, str):
+        return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+    return "[" + ", ".join(_groovy(item) for item in value) + "]"
+
+
+@pytest.fixture
+def nextflow_commands(tmp_path, nextflow_launches):
+    """Run a one-process Nextflow script and collect the command lines it renders.
+
+    Each call is a sequence of input values, one per declared input in order, as
+    JSON-compatible Python.  The process's command is prefixed with `echo`, so its
+    standard output is the command line it would have run, with runs of whitespace
+    collapsed.  Tasks finish in no fixed order, so the result is a set.  This takes
+    a JVM start and several seconds, which is why the lint checker is the default
+    oracle and this one is reserved for what only execution shows.
+    """
+
+    def run(source, *calls):
+        (title,) = re.findall(r"^process (\w+) \{$", source, re.MULTILINE)
+        echoed = source.replace(
+            'script:\n    """\n    ', 'script:\n    """\n    echo ', 1
+        )
+        assert echoed != source, "no script block to prefix"
+        channels = ", ".join(
+            "channel.of(" + ", ".join(_groovy(value) for value in column) + ")"
+            for column in zip(*calls, strict=True)
+        )
+        path = tmp_path / "run.nf"
+        path.write_text(
+            f"{echoed}\n\nworkflow {{\n"
+            f"    {title}({channels}).stdout.view {{ it.trim() }}\n}}\n"
+        )
+        done = subprocess.run(
+            ["nextflow", "-q", "run", str(path), "-work-dir", str(tmp_path / "work")],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=tmp_path,
+            env={**os.environ, "NXF_OFFLINE": "true"},
+        )
+        assert done.returncode == 0, f"nextflow run failed:\n{done.stdout}{done.stderr}"
+        return {" ".join(line.split()) for line in done.stdout.splitlines()}
+
+    return run
 
 
 @pytest.fixture

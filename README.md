@@ -1,7 +1,7 @@
 doc2wdl
 =======
 
-Generate a WDL task wrapper from a tool's help text, using docopt for parsing.
+Generate a WDL task or Nextflow process wrapper from a tool's help text, using docopt for parsing.
 
 See:
 
@@ -24,9 +24,15 @@ Usage
     # Python-specific introspection
     doc2wrapper argparse -m cnvlib.commands -p AP -o example.wdl
 
+    # Nextflow instead of WDL, for either subcommand
+    doc2wrapper docopt -t nextflow -f mycommand-help.txt -o mycommand.nf
 
-The generated WDL will very likely need further editing to work well, but hopefully this
+
+The generated wrapper will very likely need further editing to work well, but hopefully this
 approach will save you some time over writing each task from scratch.
+
+A Nextflow process input cannot be left out, and passing null fails the run, so a generated process expects `''` for an option or switch left unset and `[]` for a list with no values; the flag is then omitted and the tool's own default applies.
+Every input is a `val`, so a file input is passed as a path string rather than staged; change it to `path` by hand where staging is wanted.
 
 
 Conceptual flow
@@ -44,8 +50,6 @@ Known issues
   Every positional argument read from help text is typed `File`, which is wrong for a positional that is not a path — samtools' `region` is a genomic interval, not a file — and an option that takes no value is typed `String` rather than `Boolean` there.
 - Option help text does not reach `param_meta` when reading help text; the argparse
   reader does carry it through.
-- Nextflow output is not yet reachable from the command line, and the process template
-  still needs rewriting against `nextflow lint`.
 - The `argparse` subcommand does not sanitize argument names against WDL's keywords, so a parser with an `--output` option emits `String? output`, which WDL rejects, and two arguments sharing one `dest` produce a duplicate input.
   A `count` option such as `-v` becomes a Boolean, so the generated task can pass it at most once.
 

@@ -50,13 +50,14 @@ instead.
 
 ```
 doc2wrapper/
-  cli.py         argparse-based console entry point; two subcommands, `docopt` and `argparse`
+  cli.py         argparse-based console entry point; two subcommands, `docopt` and `argparse`,
+                 sharing `-t/--target {wdl,nextflow}` and `-o`
   docopter.py    READER: help text -> object model, via the vendored parser
   argparser.py   READER: live ArgumentParser -> object model, via argparse internals
   tasktree.py    MODEL: the `Argument` dataclass and the helpers keyed on it
   wdlgen.py      WRITER: object model -> WDL; owns RESERVED_WDL_NAMES and the spelling
                  of Python values as WDL literals
-  nfgen.py       WRITER: object model -> Nextflow (not reachable from the CLI)
+  nfgen.py       WRITER: object model -> Nextflow; owns RESERVED_NF_NAMES
   render.py      Jinja2 environment shared by the writers, at two levels:
                  `render_block` for one task, `render_document` for the whole file.
                  A writer needing different settings should build its own
@@ -76,26 +77,18 @@ First, name sanitization against a language's reserved words happens in the **wr
 Second, `type_and_default` lives in `tasktree` rather than in either writer.
 Third, `Argument.default_value` and `Argument.doc` hold Python values and plain text, never target-language syntax; `wdlgen` spells them as WDL literals on copies of the arguments, the same shape `rename_reserved` uses, so the shared Jinja2 environment carries no per-language filter.
 
-Rendering is split in two because a document is not a task. Statements that may appear
-only once per file — WDL's `version`, Nextflow's shebang and `nextflow.enable.dsl` —
-belong to the document template, which is the only layer that knows how many blocks are
-being emitted; keeping them in the block template is how a two-task document came to
-carry two version statements. Each writer therefore exposes exactly one public
-`render(tasks)` taking an iterable, so no caller of `wdlgen` or `nfgen` can obtain a
-fragment and concatenate two of them. `render.render_block` still can, and nothing
-enforces otherwise: a lone WDL block passes `miniwdl check`, because a version-less
-document falls back to draft-2, where `~{...}` is not interpolation and every
-declaration merely goes unreferenced. Its docstring is the only guard, so keep that
-docstring true. Spelling a comment is likewise per-target and lives in the block
-template: WDL 1.1 has only `#` line comments (`/* ... */` is a grammar error, not a
-style preference), while the Nextflow template wraps the same prose in `/* ... */`, so
-there is no shared helper to write and readers pass `usage` through as plain text.
+Rendering is split in two because a document is not a task.
+Statements that may appear only once per file — WDL's `version`, Nextflow's shebang and its note on unset inputs — belong to the document template, which is the only layer that knows how many blocks are being emitted; keeping them in the block template is how a two-task document came to carry two version statements.
+Each writer therefore exposes exactly one public `render(tasks)` taking an iterable, so no caller of `wdlgen` or `nfgen` can obtain a fragment and concatenate two of them.
+`render.render_block` still can, and nothing enforces otherwise: a lone WDL block passes `miniwdl check`, because a version-less document falls back to draft-2, where `~{...}` is not interpolation and every declaration merely goes unreferenced.
+Its docstring is the only guard, so keep that docstring true.
+Spelling a comment is likewise per-target and lives in the block template.
+WDL 1.1 has only `#` line comments (`/* ... */` is a grammar error, not a style preference), and the Nextflow template uses `//` per line rather than a `/* ... */` block, which the first `*/` in captured help text would close early.
+So there is no shared helper to write, and readers pass `usage` through as plain text.
 
-One breach remains, and it is honest to name it: `Argument.wdl_type` puts a WDL type name
-in the shared model, both readers fill it in, and the Nextflow template never reads it.
-Repairing that means a neutral vocabulary in the model translated per writer — the same
-shape `rename_reserved` already uses — and it moves both readers and both templates at
-once, which is why it belongs to the type-inference work rather than to a passing edit.
+One breach remains, and it is honest to name it: `Argument.wdl_type` puts a WDL type name in the shared model, both readers fill it in, and the Nextflow template never reads it.
+Repairing that means a neutral vocabulary in the model translated per writer — the same shape `rename_reserved` already uses — and it moves both readers and both templates at once, which is why it belongs to the type-inference work rather than to a passing edit.
+It is also why every Nextflow input is a `val`: staging a file needs `path`, and choosing `path` from `wdl_type` would act on a type D9 records as wrong for samtools' `region`.
 
 ## Environment
 
@@ -120,10 +113,11 @@ nextflow lint  <file>.nf     # Nextflow 25.10+ parser; `-format` also reformats
 
 `nextflow` needs Java 17 to 25 and finds the system JDK first, which on the personal workstation is JDK 27, so it exits with "Cannot find Java or it's a wrong version".
 The `dev` environment carries its own JDK; point `JAVA_HOME` at it, as in `JAVA_HOME=/opt/homebrew/Caskroom/miniconda/base/envs/dev/lib/jvm`.
-Without that, the suite's Nextflow xfails still report as expected failures, but for the wrong reason.
+Without that, the suite's Nextflow checks skip, reporting the launcher's message: a session fixture runs `nextflow -version` first, because a launcher failure and a lint rejection share exit status 1.
 
 `tests/conftest.py` wires both into the suite as fixtures, skipping when a checker is
 absent. Any change to a template, a writer, or type inference **must** go through them.
+What a Nextflow process renders at run time needs execution, not lint: the `nextflow_commands` fixture runs a generated process under `nextflow run` with its command prefixed by `echo`, at the cost of a JVM start, so it is reserved for what only execution shows.
 
 A green checker is necessary and **not sufficient**, which is why `tests/test_generate.py`
 also asserts on the generated text. Two measured instances: a template emitted
@@ -153,8 +147,8 @@ conclusion came from trusting `conda run`, and it cost the flagship fixture.
 
 ## Current state
 
-The help-text path works end to end and is covered by tests.
-The argparse path emits valid WDL for a parser with subcommands, switches and multi-value arguments, but still collides with keywords and duplicate names.
+The help-text path works end to end for both targets and is covered by tests.
+The argparse path emits valid WDL and Nextflow for a parser with subcommands, switches and multi-value arguments, but still collides with WDL keywords and duplicate names.
 Everything below was verified by execution on 2026-08-16 unless dated otherwise.
 
 ### What the help-text reader will and will not handle
@@ -197,6 +191,25 @@ Switches render faithfully with three deliberate gaps.
 A `required=True` `store_true` declares `Boolean x = false`, so a caller may omit what argparse would demand.
 `nargs=1` is modeled as the scalar it is on the command line, although argparse hands the program a one-item list.
 
+### What the Nextflow writer emits
+
+Measured on Nextflow 25.10.4 on 2026-10-23, with `nextflow lint` and with `nextflow run` on the rendered command lines.
+A DSL2 process input has no default and no unset state.
+Passing `null` as an argument fails the run with "A process input channel evaluates to null", and a `null` element in a channel reaches the script, where `x != ''` renders it as `--num null`.
+`lint` also rejects a call that leaves an input out, so the caller passes `''` for an unset value or switch and `[]` for an empty list, as the document's header comment says.
+The template therefore tests a scalar value option with `x != ''`, never with Groovy truth, which drops `--num 0` and `--flag false`; a list is tested by truth, since emptiness is its only false value.
+A switch with no spelling for false is tested by truth, and one with a spelling for false by `x == true` and `x == false`, so that `''` renders neither.
+An array option renders per action as in WDL, and is elided when the list is empty: `append` repeats the flag before each value, by joining the values with the flag as the separator after one leading flag, and `nargs` gives one flag followed by the values joined with spaces.
+The `append` form uses no closure, because an explicit parameter can collide with an input of the same name and `lint` warns that the implicit `it` is deprecated.
+Defaults are not declared at all; an elided flag leaves the tool's own default in force.
+With `has_output_file`, the process emits `path "${output_file_name}", emit: output_file, optional: true` beside `stdout emit: stdout`, which is the closest Nextflow comes to WDL's fallback to standard output when no name is given; every process emits `stdout`.
+A process with no arguments omits `input:`, because an empty section is a syntax error.
+`RESERVED_NF_NAMES` holds the Groovy keywords `lint` rejects as `val NAME`, plus names that lint accepts but that misbehave: `true`, `false`, `null`, `threadsafe` and `strictfp` fail under `nextflow run`, and `task`, `it`, `log`, `session`, `channel`, `System`, the primitive type names and commonly used class names such as `String`, `File` and `Path` resolve to an implicit variable or a class instead of the input.
+Every class a Nextflow script imports by default behaves this way, so the class names are a measured selection rather than a complete set.
+`process`, which the list used to hold, is accepted and runs correctly.
+
+On `cnvlib.commands.AP`, the 35-process Nextflow document has 28 lint errors, every one `is already declared` — the duplicate `dest` defect, not the template.
+
 ### Open defects
 
 **D14 — task titles can collide across tasks in one document.** `str.title()` lowercases
@@ -204,16 +217,6 @@ interior capitals, so subcommands `runAll` and `runall` both become task `ToolRu
 and `miniwdl` rejects the document with `Multiple tasks named ToolRunall`. Latent until
 now, because a multi-task document was invalid anyway; the D11 fix makes multi-task the
 normal argparse output. Distinct from two arguments of one task sharing a name.
-
-**D5 — the Nextflow path is unreachable and invalid.** `cli.py` never imports `nfgen`, so there is no way to ask for Nextflow output.
-Invoked directly, it produces `val output_file = "$output_file_name"`, which `nextflow lint` rejects at `19:25`.
-The template also carries WDL idioms into Groovy: `${"-f " + x}` renders the literal `-f null` rather than eliding the flag.
-Switches are the exception: they render as a Groovy ternary, `${ x ? "--x" : "--no-x" }`, which `nextflow lint` accepts, though a `val` input has no unset state, so an unset paired flag renders its negation.
-Nextflow's optional-flag idiom is different and the template needs to be rewritten against `nextflow lint`, not adapted from the WDL one.
-The rewrite also owes arms for `is_array` and `flag_per_value`, which the WDL template reads and the Nextflow one does not.
-`tests/test_generate.py` carries a `strict=True` xfail for this, so it will announce itself the moment it starts passing.
-The document/block split has already removed the shebang and `nextflow.enable.dsl` from `process_template.nf`, so the rewrite's surface is now process-level syntax only.
-Note for that work: a `/* ... */` comment can be terminated early by a `*/` inside captured help text, which per-line `//` would avoid — WDL's `#` has no such hazard.
 
 **D9 — type inference is thin and inconsistent.** Concrete evidence in the current output:
 samtools' `region` is a genomic interval, but every positional is typed `File`, so it
@@ -267,7 +270,16 @@ The argparse reader's `is_array` was inverted, so every switch became `Array[Boo
 Because `append` and `extend` add to their default rather than replace it, their input starts empty and the tool's own default applies.
 A positional's requiredness follows its arity alone, since argparse's own `required` for `nargs="*"` and `REMAINDER` has differed between Python releases.
 Both bundled help-text fixtures still generate byte-identical WDL, verified by checksum; cnvkit's `[Default: 150000]` exercises the docopt reader's default path, and `tests/test_generate.py` covers an integer, a float and a string.
-Their Nextflow output changed only on switch lines.
+Their Nextflow output then changed only on switch lines.
+
+**D5**, with the Nextflow half of D6 and the harness's launcher check.
+`cli.py` never imported `nfgen`; both subcommands now take `-t/--target {wdl,nextflow}`, defaulting to `wdl`, from one parent parser that also carries `-o`, and the writer table in `cli.py` is also the list of choices.
+`process_template.nf` was an adaptation of the WDL template: `val output_file = "$output_file_name"` failed `nextflow lint`, and `${"-f " + x}` rendered `-f null` for an unset option.
+It was rewritten against `nextflow lint` and `nextflow run`, as described under "What the Nextflow writer emits", and now reads `is_array` and `flag_per_value`.
+Flags are spelled in single-quoted Groovy strings, in which `$` and `"` are plain characters, so the writer needs no spelling pass of its own.
+`nextflow.enable.dsl=2` is gone from the document template, because 25.10 supports only DSL2 and the statement selected nothing.
+`check_nextflow` used to count a launcher failure under an unsupported Java as a lint rejection, which a strict xfail then reported as expected; that xfail is gone, and a session probe skips instead.
+Both bundled help-text fixtures and the flagship `cnvlib.commands.AP` still generate byte-identical WDL, verified by checksum.
 
 **D8** — `readme` named a non-existent `README.rst`, which setuptools ignores silently, so the wheel shipped with no long description; it now names `README.md`.
 `requires-python` is `>=3.10`: 3.9 reached end of life in October 2025, and 3.10 is the version `[tool.mypy]` checks against.
