@@ -26,7 +26,7 @@ process {{ title }} {
         {% elif arg.option_has_value %}
           ${"{{ arg.option_flag }} " + {{ arg.name }}} \
         {% else %}
-          ${if defined({{ arg.name }}) then "{{ arg.option_flag }}" else ""} \
+          ${ {{ arg.name }} ? "{{ arg.option_flag }}" : "{{ arg.false_flag }}" } \
         {% endif %}
       {% endfor %}
       """

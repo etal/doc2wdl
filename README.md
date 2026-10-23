@@ -34,25 +34,20 @@ Conceptual flow
 
 - Readers (docopt, argparse) parse the given doc, transform contents, and populate the
   object model in memory.
-- Writers (WDL, Nextflow) take the populated object model and use the static jinja2
-  template to generate a string document.
+- Writers (WDL, Nextflow) take the populated object model and render it through the static jinja2 templates; the WDL writer also spells the model's Python values as WDL literals.
 
 
 Known issues
 ------------
 
-- Type inference is thin. Every positional argument is typed `File`, which is wrong for a
-  positional that is not a path — samtools' `region` is a genomic interval, not a file —
-  and an option that takes no value is typed `String` rather than `Boolean`.
+- Type inference is thin.
+  Every positional argument read from help text is typed `File`, which is wrong for a positional that is not a path — samtools' `region` is a genomic interval, not a file — and an option that takes no value is typed `String` rather than `Boolean` there.
 - Option help text does not reach `param_meta` when reading help text; the argparse
   reader does carry it through.
 - Nextflow output is not yet reachable from the command line, and the process template
   still needs rewriting against `nextflow lint`.
-- The `argparse` subcommand does not sanitize argument names against WDL's keywords, so a
-  parser with an `--output` option emits `String? output`, which WDL rejects. It also
-  reports `nargs` backwards, marking scalars as arrays and arrays as scalars, and raises
-  `TypeError` outright on a parser using `argparse.BooleanOptionalAction`, whose paired
-  `--foo`/`--no-foo` spelling the generated command line cannot yet express.
+- The `argparse` subcommand does not sanitize argument names against WDL's keywords, so a parser with an `--output` option emits `String? output`, which WDL rejects, and two arguments sharing one `dest` produce a duplicate input.
+  A `count` option such as `-v` becomes a Boolean, so the generated task can pass it at most once.
 
 Reading help text is best-effort by nature, and the limits are measured rather than
 guessed. Over a corpus of 36 help texts, 34 of them captured from real tools, positional
@@ -65,8 +60,5 @@ list follows the synopsis with no blank line, or a heading reads `USAGE` without
 or the same flag appears both bare and with a value, the result is a warning and a partial
 task rather than a complete one.
 
-None of that applies to the `argparse` subcommand, which introspects the parser object
-directly and parses no text. It is the better route for a Python tool in principle, but
-not yet in practice: it now emits one valid document for a parser with subcommands, but
-the keyword and `nargs` defects listed above still make that document wrong for many real
-parsers, so check its output before trusting it.
+None of that applies to the `argparse` subcommand, which introspects the parser object directly and parses no text.
+It is the better route for a Python tool in principle, but not yet in practice: it now emits one valid document for a parser with subcommands, but the keyword and duplicate-name defects listed above still make that document invalid for many real parsers, so check its output before trusting it.

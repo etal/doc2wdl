@@ -1,6 +1,7 @@
 """End-to-end generation, validated by the target languages' own checkers."""
 
 import argparse
+import sys
 
 import pytest
 
@@ -13,10 +14,9 @@ EXAMPLES = ["cnvkit-antitarget", "samtools-view"]
 def two_subcommand_parser():
     """An ArgumentParser shaped like the one the argparse path has never handled.
 
-    Deliberately narrow.  Its argument names avoid WDL keywords and its actions
-    avoid `store_true` and `nargs`, because the reserved-word list and the
-    `is_array` inversion are separate open defects: a fixture that tripped them
-    would make this test fail for reasons it is not about.  What it does exercise is
+    Deliberately narrow.  Its argument names avoid WDL keywords, because the
+    reserved-word list is a separate open defect: a fixture that tripped it would
+    make this test fail for reasons it is not about.  What it does exercise is
     a parser with two subcommands -- so the document carries two tasks -- and a
     multi-line description, so the usage prose cannot be commented by accident.
     """
@@ -154,13 +154,165 @@ def test_reserved_words_are_renamed_per_target_language(check_wdl):
     assert "val scatter\n" in nfgen.render([task])
 
 
+def switch_parser():
+    """One option of each valueless kind argparse offers, and nothing else."""
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("--loud", action="store_true")
+    parser.add_argument("--no-check", action="store_false", dest="check")
+    parser.add_argument("--color", action=argparse.BooleanOptionalAction)
+    parser.add_argument("-v", "--verbose", action="count", default=2)
+    parser.add_argument("--fast", action="store_const", const="fast", dest="mode")
+    parser.add_argument("--extra", action="append_const", const="x", dest="extras")
+    return parser
+
+
+@pytest.fixture
+def switch_wdl(check_wdl):
+    """WDL for `switch_parser`, already accepted by the checker."""
+    wdl = wdlgen.render(argparser.unpack_tasks(switch_parser(), "tool"))
+    check_wdl(wdl)
+    return wdl
+
+
+def test_paired_flag_renders_one_spelling_per_value(switch_wdl, wdl_command):
+    """`BooleanOptionalAction` names both states; neither is emitted when unset.
+
+    Its last option string is the negation, so a reader taking the last spelling
+    for the flag, as it does for every other option, renders `--no-color` for true.
+    """
+    assert "Boolean? color\n" in switch_wdl
+    assert wdl_command(switch_wdl) == "tool"
+    assert wdl_command(switch_wdl, color=True) == "tool --color"
+    assert wdl_command(switch_wdl, color=False) == "tool --no-color"
+
+
+def test_a_switch_follows_its_value_rather_than_its_presence(switch_wdl, wdl_command):
+    """Every switch is off by default and on only when its input says so.
+
+    A `defined()` test cannot tell true from false, and an input with a default is
+    always defined, so the previous rendering passed every bare flag regardless.
+    `store_false` fires on false; `count` and `store_const` become plain switches.
+    """
+    assert "Boolean loud = false\n" in switch_wdl
+    assert "Boolean check = true\n" in switch_wdl
+    assert "Boolean verbose = false\n" in switch_wdl
+    assert wdl_command(switch_wdl) == "tool"
+    assert wdl_command(switch_wdl, loud=True) == "tool --loud"
+    assert wdl_command(switch_wdl, check=False) == "tool --no-check"
+    assert wdl_command(switch_wdl, verbose=True, mode=True) == "tool --verbose --fast"
+
+
+def test_nextflow_switches_render_one_spelling_per_value():
+    """The Nextflow template reads `false_flag` too; no checker runs on it yet."""
+    script = script_block(nfgen.render(argparser.unpack_tasks(switch_parser(), "tool")))
+    assert '${ loud ? "--loud" : "" } \\' in script
+    assert '${ check ? "" : "--no-check" } \\' in script
+    assert '${ color ? "--color" : "--no-color" } \\' in script
+
+
+def test_multi_value_arguments_are_arrays_spelled_per_action(check_wdl, wdl_command):
+    """`append` repeats its flag per value; `nargs` takes one flag for the list.
+
+    Exchanging the two still type checks.  The first form given to a `nargs`
+    option keeps only the last value, and the second given to `append` passes the
+    rest as stray positionals.
+    """
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("inputs", nargs="*")
+    parser.add_argument("--tag", action="append")
+    parser.add_argument("--files", nargs="+")
+    parser.add_argument("--pair", nargs=2, required=True)
+    wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
+    check_wdl(wdl)
+    assert "Array[String] inputs = []\n" in wdl
+    assert "Array[String] tag = []\n" in wdl
+    assert "Array[String]+ pair\n" in wdl
+    assert wdl_command(wdl, pair=["p", "q"]) == "tool --pair p q"
+    assert (
+        wdl_command(
+            wdl, inputs=["x", "y"], tag=["a", "b"], files=["f", "g"], pair=["p"]
+        )
+        == "tool x y --tag a --tag b --files f g --pair p"
+    )
+
+
+def test_python_defaults_are_spelled_as_wdl_literals(check_wdl, wdl_command):
+    """Defaults reach the model as Python values, and the writer spells them."""
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("--output-dir", default=".")
+    parser.add_argument("--ratio", type=float, default=0.5)
+    parser.add_argument("--chroms", nargs="+", default=["chr1", "chr2"])
+    # `append` adds to its default, so passing the default again would double it.
+    parser.add_argument("--tag", action="append", default=["x"])
+    parser.add_argument("--stream", default=sys.stdin)
+    parser.add_argument("--dims", default=[3, 4])
+    parser.add_argument("paths", nargs="*", default=".")
+    wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
+    check_wdl(wdl)
+    assert 'String output_dir = "."\n' in wdl
+    assert "Float ratio = 0.5\n" in wdl
+    assert 'Array[String] chroms = ["chr1", "chr2"]\n' in wdl
+    assert "Array[String] tag = []\n" in wdl
+    # WDL has no literal for a file object, so the input is left optional.
+    assert "String? stream\n" in wdl
+    # A default must take the declaration's shape; one that cannot is dropped.
+    assert "String? dims\n" in wdl
+    assert 'Array[String] paths = ["."]\n' in wdl
+    # WDL's own string form of a Float has six decimal places.
+    assert wdl_command(wdl) == (
+        "tool --output-dir . --ratio 0.500000 --chroms chr1 chr2 ."
+    )
+
+
+def test_help_text_defaults_reach_the_writer_as_python_values(check_wdl):
+    """The docopt reader infers a default's type and leaves its spelling to WDL."""
+    doc = """Usage: tool [options]
+
+Options:
+  -n N, --num N      Count [default: 5]
+  -r R, --ratio R    Ratio [default: 0.5]
+  -s S, --sep S      Separator [default: tab]
+"""
+    task = docopter.transform(*docopter.parse(doc))
+    assert [arg.default_value for arg in task["cli_args"]] == [5, 0.5, "tab"]
+    wdl = wdlgen.render([task])
+    check_wdl(wdl)
+    assert "Int num = 5\n" in wdl
+    assert "Float ratio = 0.5\n" in wdl
+    assert 'String sep = "tab"\n' in wdl
+
+
+# A literal backslash before `n` or `b`, which WDL would read as an escape, and each
+# placeholder opener, which WDL reads differently in its two string contexts.
+AWKWARD_TEXT = 'say "hi" C:\\new\\b ~{x} ${y}\nnext\tline'
+
+
+def test_text_survives_as_a_wdl_string_literal(check_wdl, wdl_task):
+    """Help text and string defaults read back from the document exactly as given.
+
+    `~{` in a default is an interpolation and in `parameter_meta` a syntax error, so
+    an escape that suits one context breaks the other.
+    """
+    import WDL
+
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("--label", default=AWKWARD_TEXT, help=AWKWARD_TEXT)
+    wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
+    check_wdl(wdl)
+    task = wdl_task(wdl)
+    assert task.parameter_meta["label"] == AWKWARD_TEXT
+    (label,) = task.inputs
+    default = label.expr.eval(WDL.Env.Bindings(), WDL.StdLib.Base("1.1"))
+    assert default.value == AWKWARD_TEXT
+
+
 @pytest.mark.xfail(
     strict=True,
     reason="the Nextflow writer is unreachable from the CLI and its template is "
     "still an adaptation of the WDL one: the output declaration is not valid "
-    'Nextflow, `${if defined(x) then ...}` is not Groovy, and `${"-f " + x}` '
-    "renders `-f null` rather than eliding an unset flag. `nextflow lint` reports "
-    "only the first error, so fixing one cause will not make this pass",
+    'Nextflow, and `${"-f " + x}` renders `-f null` rather than eliding an unset '
+    "flag. `nextflow lint` reports only the first error, so fixing one cause will "
+    "not make this pass",
 )
 @pytest.mark.parametrize("example", EXAMPLES)
 def test_generated_nextflow_is_accepted_by_nextflow_lint(

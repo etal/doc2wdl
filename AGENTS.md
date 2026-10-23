@@ -54,7 +54,8 @@ doc2wrapper/
   docopter.py    READER: help text -> object model, via the vendored parser
   argparser.py   READER: live ArgumentParser -> object model, via argparse internals
   tasktree.py    MODEL: the `Argument` dataclass and the helpers keyed on it
-  wdlgen.py      WRITER: object model -> WDL; owns RESERVED_WDL_NAMES
+  wdlgen.py      WRITER: object model -> WDL; owns RESERVED_WDL_NAMES and the spelling
+                 of Python values as WDL literals
   nfgen.py       WRITER: object model -> Nextflow (not reachable from the CLI)
   render.py      Jinja2 environment shared by the writers, at two levels:
                  `render_block` for one task, `render_document` for the whole file.
@@ -67,13 +68,13 @@ tests/           pytest suite; `tests/example/` holds captured help texts and a 
 ```
 
 Data flow is strictly one-directional: **reader → `dict` of template kwargs → writer**.
-The dict carries `title`, `usage`, `cli_prefix`, `cli_args` (a list of `Argument`), and
-`has_output_file`. Adding a target language should mean adding a writer plus a template,
-nothing else; adding an input format should mean adding a reader. If a change forces a
-reader to know about WDL, the abstraction has been breached. Two consequences are
-enforced: name sanitization against a language's reserved words happens in the **writer**
-(`tasktree.rename_reserved`, called with `RESERVED_WDL_NAMES` or `RESERVED_NF_NAMES`),
-and `type_and_default` lives in `tasktree` rather than in either writer.
+The dict carries `title`, `usage`, `cli_prefix`, `cli_args` (a list of `Argument`), and `has_output_file`.
+Adding a target language should mean adding a writer plus a template, nothing else; adding an input format should mean adding a reader.
+If a change forces a reader to know about WDL, the abstraction has been breached.
+Three consequences are enforced.
+First, name sanitization against a language's reserved words happens in the **writer** (`tasktree.rename_reserved`, called with `RESERVED_WDL_NAMES` or `RESERVED_NF_NAMES`).
+Second, `type_and_default` lives in `tasktree` rather than in either writer.
+Third, `Argument.default_value` and `Argument.doc` hold Python values and plain text, never target-language syntax; `wdlgen` spells them as WDL literals on copies of the arguments, the same shape `rename_reserved` uses, so the shared Jinja2 environment carries no per-language filter.
 
 Rendering is split in two because a document is not a task. Statements that may appear
 only once per file — WDL's `version`, Nextflow's shebang and `nextflow.enable.dsl` —
@@ -148,10 +149,9 @@ conclusion came from trusting `conda run`, and it cost the flagship fixture.
 
 ## Current state
 
-The help-text path works end to end and is covered by tests. The argparse path now emits
-valid WDL for a parser with subcommands, but still misstates types and collides with
-keywords. Everything below was verified by execution on 2026-08-16, and each open item is
-filed in beads — run `bd ready`.
+The help-text path works end to end and is covered by tests.
+The argparse path emits valid WDL for a parser with subcommands, switches and multi-value arguments, but still collides with keywords and duplicate names.
+Everything below was verified by execution on 2026-08-16 unless dated otherwise, and each open item is filed in beads — run `bd ready`.
 
 ### What the help-text reader will and will not handle
 
@@ -182,37 +182,18 @@ subcommand, where no flag's arity differs between the options block and the syno
 That covers argparse-generated tools well and hand-written C tools poorly. Both bundled
 fixtures sit inside it, which is why they were never a sample.
 
-**The argparse reader has no such limits** — it reads a live parser object and needs no
-text parsing at all. With D2 and D11 fixed it now emits a single valid document for a
-parser with subcommands: `cnvlib.commands.AP`, the README's flagship example, unpacks to
-35 tasks under one `version 1.1`. It is nonetheless still the *more* broken path. Three
-defects stand between it and WDL that checks, and they are not a sequence — measured on
-that flagship output, the first error `miniwdl check` reports is **D3**, at
-`String? output_dir = .`, an unquoted string default; **D12** bites separately wherever a
-dest collides with a WDL keyword (`String? output`); and **D6** never blocks a checker at
-all, because `Array[Boolean] scatter_ = []` is valid WDL that quietly pins every bare
-flag on. So D3 and D12 are validity defects and D6 is a silent-correctness defect, which
-is the more dangerous kind. Two further defects are reachable only from parsers the two
-bundled fixtures do not resemble: **D15**, a paired boolean flag that crashes the reader,
-and **D16**, a double quote in help text that breaks the generated `parameter_meta`.
+**The argparse reader has no such limits** — it reads a live parser object and needs no text parsing at all.
+`cnvlib.commands.AP`, the README's flagship example, unpacks to 35 tasks under one `version 1.1`.
+Measured on 2026-10-22, after D3, D6, D15 and D16 were fixed, the first error `miniwdl check` reports on that document is **D12**, at `String? output`.
+With a complete WDL keyword list substituted as a probe, 30 of the 35 tasks check.
+Four of the remaining five declare one `dest` twice, which the argument-name collision issue covers, and the fifth is `target --avg-size`, a `type=int` option whose default is the float `266.6666666666667`, a D9 matter.
+
+Switches render faithfully with three deliberate gaps.
+`count`, `store_const` and `append_const` become a Boolean "pass this flag" input, so `-vvv` cannot be expressed; WDL 1.1 has no string repetition, and the expression that emulates it is unreadable in output meant for editing.
+A `required=True` `store_true` declares `Boolean x = false`, so a caller may omit what argparse would demand.
+`nargs=1` is modeled as the scalar it is on the command line, although argparse hands the program a one-item list.
 
 ### Open defects
-
-**D15 — `argparse.BooleanOptionalAction` crashes the reader, and its last flag is the
-negated one.** It subclasses `Action` directly rather than any handled class, so it hits
-the same fatal `else` D13 did. Adding it to the tuple is not sufficient, which is why the
-D13 fix left it out: the reader picks `option_strings[-1]`, which for this action is
-`--no-foo`, so a Boolean input set to true would render the negation. The action carries
-both spellings, and the correct rendering — emit one flag or the other, never neither —
-is not expressible in either block template today.
-
-**D16 — a double quote in help text terminates the WDL `parameter_meta` literal.**
-`task_template.wdl` writes `{{ arg.name }}: "{{ arg.doc }}"` with no escaping. Measured
-on `mypy.dmypy.client.parser`, whose `inspect` subcommand documents its span format as
-`(e.g. 1:2:3:4:"int")`, and on `cnvlib.commands.AP`, where 6 of 392 help strings carry a
-quote. Escaping belongs to the writer: Jinja2's autoescaping is HTML escaping and is
-pinned off in both writers for good reason, so this needs a per-target filter. A
-backslash has the same exposure, and WDL reads `~{` inside a string as interpolation.
 
 **D14 — task titles can collide across tasks in one document.** `str.title()` lowercases
 interior capitals, so subcommands `runAll` and `runall` both become task `ToolRunall`,
@@ -220,32 +201,15 @@ and `miniwdl` rejects the document with `Multiple tasks named ToolRunall`. Laten
 now, because a multi-task document was invalid anyway; the D11 fix makes multi-task the
 normal argparse output. Distinct from the argument-name collision already filed.
 
-**D3 — Python literals leak into WDL.** `Boolean? verbose = False` is emitted; WDL spells
-it `false`. Defaults pass through `str()`/`repr()` with no target-language serializer.
-
-**D5 — the Nextflow path is unreachable and invalid.** `cli.py` never imports `nfgen`, so
-there is no way to ask for Nextflow output. Invoked directly, it produces
-`val output_file = "$output_file_name"`, which `nextflow lint` rejects at `19:25`. The
-template also carries WDL idioms into Groovy: `${if defined(x) then "-f" else ""}` is not
-Groovy, and `${"-f " + x}` renders the literal `-f null` rather than eliding the flag.
-Nextflow's optional-flag idiom is different and the template needs to be rewritten
-against `nextflow lint`, not adapted from the WDL one. `tests/test_generate.py` carries a
-`strict=True` xfail for this, so it will announce itself the moment it starts passing.
-The document/block split has already removed the shebang and `nextflow.enable.dsl` from
-`process_template.nf`, so the rewrite's surface is now process-level syntax only. Note for
-that work: a `/* ... */` comment can be terminated early by a `*/` inside captured help
-text, which per-line `//` would avoid — WDL's `#` has no such hazard.
-
-**D6 — `is_array` is inverted in the argparse reader.** It computes
-`is_array=(action.nargs in (0, 1, "?"))`, which marks scalars as arrays; the array cases
-are `nargs` in `("*", "+")`, an integer greater than one, and `action="append"`. The WDL
-template now consumes `is_array`, so this error has become visible output rather than a
-dormant field, and the visible output is worse than a wrong type name. A bare flag is
-declared `Array[Boolean] recursive = []` and rendered as
-`~{if defined(recursive) then "--recursive" else ""}`; `defined()` is false only for
-`None`, and a non-optional declaration carrying a default is never `None`, so the flag
-is emitted unconditionally and no input value can switch it off. Verified with miniwdl's
-own evaluator, which returns `'--recursive'` for the declared default of `[]`.
+**D5 — the Nextflow path is unreachable and invalid.** `cli.py` never imports `nfgen`, so there is no way to ask for Nextflow output.
+Invoked directly, it produces `val output_file = "$output_file_name"`, which `nextflow lint` rejects at `19:25`.
+The template also carries WDL idioms into Groovy: `${"-f " + x}` renders the literal `-f null` rather than eliding the flag.
+Switches are the exception: they render as a Groovy ternary, `${ x ? "--x" : "--no-x" }`, which `nextflow lint` accepts, though a `val` input has no unset state, so an unset paired flag renders its negation.
+Nextflow's optional-flag idiom is different and the template needs to be rewritten against `nextflow lint`, not adapted from the WDL one.
+The rewrite also owes arms for `is_array` and `flag_per_value`, which the WDL template reads and the Nextflow one does not.
+`tests/test_generate.py` carries a `strict=True` xfail for this, so it will announce itself the moment it starts passing.
+The document/block split has already removed the shebang and `nextflow.enable.dsl` from `process_template.nf`, so the rewrite's surface is now process-level syntax only.
+Note for that work: a `/* ... */` comment can be terminated early by a `*/` inside captured help text, which per-line `//` would avoid — WDL's `#` has no such hazard.
 
 **D9 — type inference is thin and inconsistent.** Concrete evidence in the current output:
 samtools' `region` is a genomic interval, but every positional is typed `File`, so it
@@ -253,6 +217,7 @@ renders as `Array[File]` and a WDL engine will try to localize `chr1:100-200` as
 The angle-bracket convention is not a usable signal either — cnvkit's `targets` is a bare
 word and genuinely is a file. Options with `argcount == 0` are likewise typed `String`
 when they are plainly `Boolean`. Inference should live in one place keyed on the model.
+The WDL template keeps a `defined()` arm for exactly those `String?` switches; once the docopt reader types them Boolean, that arm is dead and should go, which will deliberately change the samtools fixture's output.
 
 **D10 — `parameter_meta` is mostly empty from the help-text reader.** `Option.parse` in
 the vendored parser already splits the description off the option line and then discards
@@ -264,7 +229,7 @@ Smaller known wrongness, filed but low priority: help-text notation leaks into f
 samtools' `--region[s]-file FILE` becomes a literal flag `--region[s]-file`. Not low
 priority any more, though it is still small: **D12**, `RESERVED_WDL_NAMES` holding one
 entry against roughly thirty WDL 1.1 keywords, is what now blocks the argparse path.
-With D2 and D11 fixed, a parser with a `--output` option renders `String? output`, and
+A parser with a `--output` option renders `String? output`, and
 `miniwdl` rejects it with `unexpected keyword output`.
 
 ### Resolved
@@ -290,8 +255,18 @@ the skip, and the handled-action tuple gained `_CountAction` and generalized
 `store_const` and a `count` flag no longer take the same fatal branch. The flagship
 output did not move, verified by checksum.
 
+**D3, D6, D15 and D16**, fixed together because all four meet in how a switch and a literal are spelled.
+Defaults were pasted into the template with `str()`, so `False` and an unquoted `.` reached the WDL; the docopt reader avoided this only by storing WDL text itself.
+Both readers now store the Python value, and `wdlgen` spells defaults and help text as WDL literals, escaping `~{` and `${` as `\u007E{` and `\u0024{`, the one spelling both WDL string contexts read as plain text.
+The argparse reader's `is_array` was inverted, so every switch became `Array[Boolean] x = []`, which a `defined()` test always passed; switches are now Boolean, rendered from their value, with `Argument.false_flag` carrying the spelling for false, which is how `BooleanOptionalAction` and `store_false` are expressed.
+`Argument.flag_per_value` separates `append`, whose flag repeats per value, from `nargs`, whose one flag takes the list; each form type checks in place of the other, and a `nargs` option given the per-value form keeps only its last value.
+Because `append` and `extend` add to their default rather than replace it, their input starts empty and the tool's own default applies.
+A positional's requiredness follows its arity alone, since argparse's own `required` for `nargs="*"` and `REMAINDER` has differed between Python releases.
+Both bundled help-text fixtures still generate byte-identical WDL, verified by checksum; cnvkit's `[Default: 150000]` exercises the docopt reader's default path, and `tests/test_generate.py` covers an integer, a float and a string.
+Their Nextflow output changed only on switch lines.
+
 **D8** — `readme` named a non-existent `README.rst`, which setuptools ignores silently, so the wheel shipped with no long description; it now names `README.md`.
-`requires-python` is `>=3.10`, the version `str | None` in `tasktree.py` needs, which also matches `[tool.mypy]`.
+`requires-python` is `>=3.10`: 3.9 reached end of life in October 2025, and 3.10 is the version `[tool.mypy]` checks against.
 `project.urls` point at `etal/doc2wdl`.
 The bare `setup()` shim in `setup.py` is gone, since PEP 517 builds and editable installs do not need it, and `requirements-dev.txt` lists only tools the repository configures or runs.
 

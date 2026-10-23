@@ -72,3 +72,52 @@ def check_nextflow(tmp_path):
         return path
 
     return check
+
+
+@pytest.fixture
+def wdl_task():
+    """Parse and type check a one-task WDL document with miniwdl's Python API.
+
+    A checker can say only that a task is valid.  What a task does -- the values
+    its declarations hold, the command line it runs -- needs the evaluator.
+    """
+    WDL = pytest.importorskip("WDL")
+
+    def parse(source):
+        document = WDL.parse_document(source)
+        document.typecheck()
+        (task,) = document.tasks
+        return task
+
+    return parse
+
+
+@pytest.fixture
+def wdl_command(wdl_task):
+    """Evaluate a one-task WDL document's command line for the given input values.
+
+    Values are given as JSON-compatible Python, as in a WDL inputs file.  An input
+    left out takes its declared default, or stays unset.  Line continuations are
+    joined and runs of whitespace collapsed, so the result reads as the shell would
+    split it.
+    """
+    import WDL
+
+    def evaluate(source, **inputs):
+        task = wdl_task(source)
+        unknown = set(inputs) - {decl.name for decl in task.inputs}
+        assert not unknown, f"no such inputs: {unknown}"
+        stdlib = WDL.StdLib.Base("1.1")
+        env = WDL.Env.Bindings()
+        for decl in task.inputs:
+            if decl.name in inputs:
+                value = WDL.Value.from_json(decl.type, inputs[decl.name])
+            elif decl.expr is not None:
+                value = decl.expr.eval(env, stdlib)
+            else:
+                value = WDL.Value.Null()
+            env = env.bind(decl.name, value)
+        command = task.command.eval(env, stdlib).value
+        return " ".join(command.replace("\\\n", " ").split())
+
+    return evaluate

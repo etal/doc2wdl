@@ -2,6 +2,8 @@
 
 import argparse
 
+import pytest
+
 from doc2wrapper import argparser
 
 
@@ -48,3 +50,62 @@ def test_store_false_default_is_not_confused_with_its_const():
     (task,) = argparser.unpack_tasks(parser, "tool")
     assert [arg.name for arg in task["cli_args"]] == ["loud", "check"]
     assert [arg.default_value for arg in task["cli_args"]] == [False, True]
+
+
+def test_paired_flag_spellings_follow_the_action():
+    """A `BooleanOptionalAction` adds `--no-X` for each long `--X`, and only that.
+
+    The last option string is the negation, and a short spelling has none.
+    """
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("-s", "--spam", action=argparse.BooleanOptionalAction)
+    parser.add_argument("-q", action=argparse.BooleanOptionalAction)
+    (task,) = argparser.unpack_tasks(parser, "tool")
+    assert [(arg.option_flag, arg.false_flag) for arg in task["cli_args"]] == [
+        ("--spam", "--no-spam"),
+        ("-q", ""),
+    ]
+
+
+def test_paired_flag_spelled_with_a_no_prefix_stays_affirmative():
+    """`--no-cache` is the option itself, and `--no-no-cache` its negation."""
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    try:
+        parser.add_argument("--no-cache", action=argparse.BooleanOptionalAction)
+    except ValueError:
+        pytest.skip("this Python forbids a `--no-` spelling on a paired flag")
+    (task,) = argparser.unpack_tasks(parser, "tool")
+    (arg,) = task["cli_args"]
+    assert (arg.option_flag, arg.false_flag) == ("--no-cache", "--no-no-cache")
+
+
+def test_requiredness_of_a_positional_follows_its_arity():
+    """Output must not depend on which Python release built the parser.
+
+    Some releases mark a `nargs="*"` or `REMAINDER` positional without a default as
+    required and others do not.  A positional that accepts zero values is optional
+    and one that must take a value is required, whatever its attribute says; an
+    option keeps whatever its own `required` says.
+    """
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    zero_or_more = [
+        ("star", "*"),
+        ("maybe", "?"),
+        ("rest", argparse.REMAINDER),
+        ("hidden", argparse.SUPPRESS),
+    ]
+    for name, nargs in zero_or_more:
+        parser.add_argument(name, nargs=nargs).required = True
+    parser.add_argument("one").required = False
+    parser.add_argument("plus", nargs="+")
+    parser.add_argument("--opt", nargs="*", required=True)
+    (task,) = argparser.unpack_tasks(parser, "tool")
+    assert {arg.name: arg.is_required for arg in task["cli_args"]} == {
+        "star": False,
+        "maybe": False,
+        "rest": False,
+        "hidden": False,
+        "one": True,
+        "plus": True,
+        "opt": True,
+    }

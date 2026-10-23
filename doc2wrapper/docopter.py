@@ -147,17 +147,19 @@ def transform(usage, positionals, options):
             has_output_file = True
         else:
             name = _identifier(option_flag)
+        # The options block carries no requiredness, and the synopsis's brackets are
+        # read only for positionals, so no option's input is required.
         arg = Argument(
             name=name,
             wdl_type="String",
-            is_required=False,
             option_flag=option_flag,
             option_has_value=(opt.argcount == 1),
         )
         if opt.value is not None and opt.argcount == 1:
             wdl_type, default = type_and_default(opt.value)
             if default is not None:
-                arg.is_required = True  # Otherwise redundant / undefined behavior
+                # A default makes the input non-optional; `Argument.is_optional`
+                # says so, and the writer declares it without `?`.
                 arg.default_value = default
                 arg.wdl_type = wdl_type
         cli_args.append(arg)

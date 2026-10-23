@@ -9,16 +9,16 @@ task {{ title }} {
         {% if arg.is_required %}
     Array[{{ arg.wdl_type }}]+ {{ arg.name }}
         {% else %}
-    Array[{{ arg.wdl_type }}] {{ arg.name }} = []
+    Array[{{ arg.wdl_type }}] {{ arg.name }} = {{ arg.default_value if arg.default_value is not none else '[]' }}
         {% endif %}
       {% else %}
-    {{ arg.wdl_type }}{{ '' if arg.is_required else '?' }} {{ arg.name }}{% if arg.default_value is not none %} = {{ arg.default_value }}{% endif +%}
+    {{ arg.wdl_type }}{{ '?' if arg.is_optional else '' }} {{ arg.name }}{% if arg.default_value is not none %} = {{ arg.default_value }}{% endif +%}
       {% endif %}
     {% endfor %}
   }
   parameter_meta {
     {% for arg in cli_args %}
-    {{ arg.name }}: "{{ arg.doc }}"
+    {{ arg.name }}: {{ arg.doc }}
     {% endfor %}
   }
 
@@ -28,16 +28,28 @@ task {{ title }} {
       {% if arg.is_positional %}
         {% if arg.is_array %}
     ~{sep(" ", {{ arg.name }})} \
-        {% elif arg.is_required %}
+        {% elif not arg.is_optional %}
     ~{ {{ arg.name }} } \
         {% else %}
     ~{select_first([{{ arg.name }}, ""])} \
         {% endif %}
       {% elif arg.option_has_value %}
-        {% if arg.is_required %}
+        {% if arg.is_array and arg.flag_per_value %}
+    ~{sep(" ", prefix("{{ arg.option_flag }} ", {{ arg.name }}))} \
+        {% elif arg.is_array and arg.is_required %}
+    {{ arg.option_flag }} ~{sep(" ", {{ arg.name }})} \
+        {% elif arg.is_array %}
+    ~{if length({{ arg.name }}) > 0 then "{{ arg.option_flag }} " + sep(" ", {{ arg.name }}) else ""} \
+        {% elif not arg.is_optional %}
     {{ arg.option_flag }} ~{ {{ arg.name }} } \
         {% else %}
     ~{"{{ arg.option_flag }} " + {{ arg.name }}} \
+        {% endif %}
+      {% elif arg.wdl_type == "Boolean" %}
+        {% if arg.is_optional %}
+    ~{if defined({{ arg.name }}) then (if select_first([{{ arg.name }}]) then "{{ arg.option_flag }}" else "{{ arg.false_flag }}") else ""} \
+        {% else %}
+    ~{if {{ arg.name }} then "{{ arg.option_flag }}" else "{{ arg.false_flag }}"} \
         {% endif %}
       {% else %}
     ~{if defined({{ arg.name }}) then "{{ arg.option_flag }}" else ""} \
