@@ -136,14 +136,17 @@ invisible through a wheel inspection and only surfaced on install. Verify with:
 rm -rf build doc2wrapper.egg-info && python -m venv /tmp/v && /tmp/v/bin/pip install .
 ```
 
-`tests/example/Makefile` encodes an older shell-level version of the same loop
-(`make test`, `make check`); it assumes `doc2wrapper` is on `PATH`, and its
-`cnvkit-antitarget-argparse` target needs `cnvlib`. That import works, but only if you
-call the environment's interpreter directly —
-`/opt/homebrew/Caskroom/miniconda/base/envs/cnvkit/bin/python3` — because `conda run -n
-cnvkit` and `conda activate` both fail on this machine with a broken activation hook.
-An earlier revision of this file recorded `cnvlib` as simply "not importable"; that
-conclusion came from trusting `conda run`, and it cost the flagship fixture.
+`tests/example/Makefile` only records how each captured help text was produced; generation and checking live in the pytest suite.
+
+The README's flagship argparse example, `cnvlib.commands.AP`, needs `cnvlib`, which the `cnvkit` environment provides.
+That import works only if you call the environment's interpreter directly, because `conda run -n cnvkit` and `conda activate` both fail on this machine with a broken activation hook:
+
+```bash
+/opt/homebrew/Caskroom/miniconda/base/envs/cnvkit/bin/python3 -c "import sys; sys.path.insert(0, '.'); \
+  sys.argv = ['d2w', 'argparse', '-m', 'cnvlib.commands', '-p', 'AP']; from doc2wrapper import cli; cli.main()"
+```
+
+An earlier revision of this file recorded `cnvlib` as simply "not importable"; that conclusion came from trusting `conda run`, and it cost the flagship fixture.
 
 ## Current state
 
