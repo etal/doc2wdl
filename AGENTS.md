@@ -174,14 +174,14 @@ Because the corpus is not a sample, its counts describe the corpus and not how o
 - **Hard failure: 3.** No single `usage:` marker: none at all (`tar`), a Cobra heading spelled `USAGE` without a colon (`gh repo clone`), or two markers (`python3 -m timeit`, whose docstring has both "Library usage:" and "Command line usage:").
   These raise `docopter.UsageNotFound`, which the CLI reports as a message and exit status 1.
 - **Degraded: 3.** `parse_pattern` raises on the synopsis, so the positionals degrade to empty with a warning on standard error, and the options survive.
-  `cnvkit.py batch` fails on argparse's notation for an optional value, and `python3 -m zipfile` on a line opening with a flag read as an options entry; both are open defects below.
+  `cnvkit.py batch` fails on argparse's notation for an optional value, an open defect below, and `python3 -m zipfile` on a wrapped synopsis line opening with `-c`, which is read as an options entry and declares `-t` a second time.
   In `samtools stats` the options block follows the synopsis with no blank line, so `printable_usage` reads it as usage.
 - **Parsed: 8.** Only `wgsim` yields exactly its positionals.
   The rest run to completion with extra positionals: summary placeholders such as `[OPTIONS]` and `...` (`tabix`), option values the reader cannot attribute to an option (`ls`, which has no options block, and `bedtools intersect`, whose tab-indented block yields no options), an options block's prose (`htsfile`, swallowed as `samtools stats` is but without desyncing), or a placeholder split at its space (`jq`'s `<jq filter>`).
   argparse's `X [X ...]` for `nargs="+"` becomes two positionals, one required and one an optional array (`miniwdl check`), and after an option, as in `-n NORMAL [NORMAL ...]`, the repetition becomes a positional (`cnvkit.py import-rna`).
 
-The reliable shape is a single blank-line-terminated synopsis naming at most one fixed subcommand, where no flag's arity differs between the options block and the synopsis and no wrapped line, of prose or of the synopsis, begins with a flag.
-argparse-generated help departs from it in two ways: it writes an optional value in brackets, and it wraps prose and synopsis at `COLUMNS`, so whether a line opens with a flag depends on the width: `python3 -m zipfile` degrades at 80 columns and parses at 120.
+The reliable shape is a single blank-line-terminated synopsis naming at most one fixed subcommand, where no flag's arity differs between the options block and the synopsis and no wrapped line of the synopsis begins with a flag.
+argparse-generated help departs from it in two ways: it writes an optional value in brackets, and it wraps the synopsis at `COLUMNS`, so whether a synopsis line opens with a flag depends on the width: `python3 -m zipfile` degrades at 80 columns and parses at 120.
 Hand-written C help departs from it by placing the options block directly under the synopsis (`samtools stats`, `htsfile`) or by leaving the block out (`ls`).
 Both fixtures in `tests/example/` sit inside the shape, which is why they were never a sample.
 
@@ -224,18 +224,16 @@ Over 83 positionals from `cnvlib.commands.AP`, the two fixtures, 16 samtools sub
 The five misses are `region`, `reg`, `prefix`, `sql` and `arguments`, the first three from samtools and the last two from `sqlite3` and `trace`, so samtools' `region` still renders as `Array[File]` and an engine will try to localize `chr1:100-200`.
 No name-based rule was adopted: a filename-word list scored 65 of 83, splits one tool's own positionals between `File` and `String`, and is open-ended, while a list of string names such as `region` must leave out cnvkit's `interval`, which is a BED file.
 The angle-bracket convention is no signal either, since cnvkit's `targets` and samtools' `region` are both bare words.
-An option value placeholder such as `-t FILE` would be real evidence, but `Option.parse` discards it; `docopter._option_entries` now yields the flags side of each options-block entry, which is where reading one would start.
+An option value placeholder such as `-t FILE` would be real evidence, but `Option.parse` discards it; `docopter._option_entries` yields each options-block entry's lines, which is where reading one would start.
 
-**A wrapped line that opens with a flag declares an option.** `parse_defaults` starts an option at any line of the help text opening with a flag, so a description whose wrapped line begins `--normal` declares a second option.
-Measured on cnvkit's `import-rna` help at `COLUMNS=80`, kept as `tests/corpus/help-cnvkit-import-rna.txt`, the stray option takes the surrounding `[Default: polish]`, declares `String normal = "polish"`, and so always passes `--normal polish`, while the real `-n, --normal` becomes `normal_2`.
-Where the synopsis names a flag that such a line repeats, docopt rejects the flag as ambiguous, the synopsis no longer parses, and the positionals are lost: `help-cnvkit-batch.txt` declares `--diagram` twice from wrapped prose, and in `help-zipfile.txt` a wrapped synopsis line opening with `-c` declares `-t` a second time.
-Over `cnvlib.commands.AP`, four flags are read twice at `COLUMNS=80`, one at 120 and none at 60, 100 or 200.
-`docopter._option_entries` already tells such a line from an entry by the description column; making it the authority on the option set, rather than `parse_defaults`, changes which options exist, so it needs checksums of its own.
-An options block indented with tabs, as the bedtools subcommands' are, yields no options at all, because the split matches spaces only.
+**A wrapped synopsis line that opens with a flag declares an option.** An options-block entry may start on any line opening with a flag where no description column is yet known, the usage section included, because hand-written help may place its options block directly under the synopsis with no blank line, where `printable_usage` reads it as usage.
+So in `help-zipfile.txt` the synopsis line opening with `-c` declares `-t` a second time, and docopt rejects `-t` as ambiguous.
+Skipping entries inside the usage paragraph would let `help-zipfile.txt` parse, but it would also turn `help-samtools-stats.txt` from degraded into parsed with 208 positionals read from its options block, so the two cases need a rule that tells a wrapped synopsis line from an options block, which none yet does.
+An options block indented with tabs, as the bedtools subcommands' are, yields no options at all, because an entry starts only after spaces.
 
 **argparse's notation for an optional value desyncs the synopsis.** argparse writes an option with `nargs="?"` or `nargs="*"` with its value in brackets, as in `[-p [PROCESSES]]`, because the value may be left out.
 The options block declares `-p` as taking a value, so the option parser takes the opening bracket as that value and bracket depth desyncs, as `ARITY_OVERLOAD` in `tests/test_docopter.py` does with a closing bracket.
-In `tests/corpus/help-cnvkit-batch.txt`, `[-p [PROCESSES]]` and `[-n [FILES ...]]` raise `unmatched '('`; with both rewritten without the inner brackets, the synopsis fails only on the repeated `--diagram` above, and with that line also removed it parses.
+In `tests/corpus/help-cnvkit-batch.txt`, `[-p [PROCESSES]]` and `[-n [FILES ...]]` raise `unmatched '('`, and with both rewritten without the inner brackets the synopsis parses.
 
 Smaller known wrongness, low priority: help-text notation leaks into flags, so
 samtools' `--region[s]-file FILE` becomes a literal flag `--region[s]-file`.
@@ -321,11 +319,11 @@ The samtools WDL changes only in its 16 switches, each now `Boolean x = false` r
 The flagship's WDL changes in 76 declarations and the `--avg-size` command line: 41 positionals from `String` to `File`, 33 `Float` inputs and `--drop-outliers`, a `type=float` option with default `10`, to `String`, and `Int avg_size = 266.6666666666667` to `Int? avg_size`, whose flag is now passed only when set; the whole document then passes `miniwdl check`.
 
 **D10** — help-text options reached `parameter_meta` as `""`, because `Option.parse` splits each description off its flags and discards it.
-`docopter.parse` now annotates each `Option` with a `description`, read by `_option_entries` and `_option_descriptions` in the reader, and `_docopt.py` is unchanged: the vendored file's own header says a feature belongs in `docopter`, and a stored description would have had to survive the four places `parse_long` and `parse_shorts` copy an option.
-An entry starts where `parse_defaults` starts one, except on a wrapped line described below; the flags are split from the description by upstream's two-space rule and parsed with `Option.parse`, and the description is matched to its option by `(short, long)`.
+`docopter.parse` annotates each `Option` with a `description`, and `_docopt.py` was left unchanged: the vendored file's own header says a feature belongs in `docopter`, and a stored description would have had to survive the four places `parse_long` and `parse_shorts` copy an option.
+D10 found each description with `_option_entries` and matched it to its option by `(short, long)`, while `parse_defaults` still decided the option set; D17 below made the entries decide it, each carrying its own description.
 Options that the synopsis alone names, which `parse_pattern` appends to the list, take `""`.
-Because `parse_defaults` runs an entry to the next one, samtools' section headings and any epilog were read as description; an entry here ends at a blank line or at a line indented no deeper than its option.
-A line opening with a flag ends it only when indented less than the description, since argparse wraps prose onto a flag; that is the defect still open above, seen from the description side.
+Because `parse_defaults` ran an entry to the next one, samtools' section headings and any epilog were read as description; a description here ends at a blank line or at a line indented no deeper than its option.
+A line opening with a flag ends it only when indented less than the description, since argparse wraps prose onto a flag.
 An option line with no description on it, as argparse writes an option whose flags are too wide for the help column, takes the column of the last description until its own first wrapped line states one.
 Wrapped lines are joined with single spaces, except where `textwrap`, with which argparse wraps help, can have broken a word: after a hyphen that follows two letters, or a letter, a hyphen and a letter, and precedes two letters, optionally separated by a hyphen, or after a `--` that follows a word or punctuation, the lines are rejoined without a space.
 A suspended hyphen, as in `pre- and post-`, or a word ending in `--`, that falls at a line end cannot be told from a broken word and loses its space; `[default: ...]` notes stay in the text, as the argparse reader keeps them.
@@ -334,14 +332,26 @@ At `COLUMNS` of 53 or less argparse splits words longer than the help column, an
 Of the 47 option inputs the samtools fixture generates, 45 gain a description; `-R` and `-F` separate flags from description with one space and stay empty.
 Both fixtures' WDL is byte-identical outside `parameter_meta`, verified by checksum, and their Nextflow is byte-identical; the flagship's WDL and Nextflow are untouched.
 
+**D17** — wrapped prose that opened with a flag declared an option.
+Upstream's `parse_defaults` started an option at every line opening with a flag, so on cnvkit's `import-rna` help at `COLUMNS=80` a description wrapped onto `--normal` declared a second `--normal`, which took `--normalize-method`'s `[Default: polish]` and was always passed as `--normal polish`, while the real `-n, --normal` became `normal_2`.
+Over the subcommands of `cnvlib.commands.AP`, four long flags were read twice at `COLUMNS=80`, one at 120 and none at 60, 100 or 200; now none is, at any even `COLUMNS` from 40 to 220.
+`docopter._option_entries`, which D10 wrote to find descriptions, now decides the option set, and `parse_defaults` is deleted from the vendored file, as `docopt()` was, so that no caller can use it again.
+A line opening with a flag starts an entry only when indented less than the description column, and each entry's lines reach `Option.parse` joined by line breaks, the text `parse_defaults` gave it, so flags, argument counts and defaults are read as before.
+Two further rules keep that from losing what `parse_defaults` found.
+The text after two spaces on an option line that itself opens with a flag, as in wget's `-q,  --quiet`, where upstream's two-space rule ends the flags early, states no column; otherwise wget's long-only options, indented to that column, would read as prose.
+An entry runs across blank lines while its lines are indented deeper than its option, because clap writes `[default: auto]` as a paragraph of its own, and it ends at a shallower line, so a `[default: ...]` in an epilog indented no deeper than the options belongs to no option; one indented deeper is still read as the last option's.
+Each option now carries its own description, so an option documented twice no longer takes the other entry's description.
+The column is carried from one section to the next, so a later section whose option lines are indented as deep as an earlier section's descriptions would read as prose; no captured help text is laid out that way, and resetting the column at a section heading instead adds a prose fragment to pytest's options.
+Both fixtures generate byte-identical WDL and Nextflow, verified by checksum, and every corpus file keeps its class.
+In the corpus, `cnvkit.py batch` loses its stray `--count` and `--diagram`, and `cnvkit.py import-rna` its stray `--normal`, where `--normalize-method` now takes `polish`; both documents pass `miniwdl check`.
+Over 196 help texts, the fixtures, the corpus and 180 captured from tools on the personal workstation on 2026-10-24, 84 option declarations disappear, each a fragment of wrapped prose or a second reading of a flag that keeps its first, and one appears, in R's tab-separated help, which the reader already misread.
+
 ### Working on the vendored parser
 
-`doc2wrapper/_docopt.py` is docopt 0.6.2 with every definition of the runtime
-argv-matching path deleted whole, and nothing else changed except two regex literals that
-gained the `r` prefix they always needed. That property is what makes it reviewable
-against upstream, so **do not reformat it** and do not add features to it. Deleting
-`docopt()` was deliberate: it is the function whose `argv=sys.argv[1:]` default caused D1,
-and its absence stops anyone from reaching for the obvious name and recommitting the bug.
+`doc2wrapper/_docopt.py` is docopt 0.6.2 with every definition of the runtime argv-matching path deleted whole, and `parse_defaults` with it, and nothing else changed except two regex literals that gained the `r` prefix they always needed.
+That property is what makes it reviewable against upstream, so **do not reformat it** and do not add features to it.
+Both deletions were deliberate.
+`docopt()` is the function whose `argv=sys.argv[1:]` default caused D1, and `parse_defaults` the one that read wrapped prose as options; with both gone, neither bug can return through a call to its familiar name.
 
 `DocoptExit` survives the cut even though nothing in the static path raises it, because
 `parse_long` and `parse_shorts` evaluate it in `tokens.error is DocoptExit` guards. That

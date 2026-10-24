@@ -4,8 +4,10 @@ Upstream is unmaintained (last release 2014) and doc2wrapper depends on names th
 were never part of its public API, so the copy is pinned here rather than declared
 as a requirement.  Only the STATIC path is retained -- the help text is read as a
 grammar and never matched against ``sys.argv``.  Every definition belonging to the
-runtime argv-matching path was deleted whole; nothing else was rewritten except
-that two regex literals gained the ``r`` prefix they always needed.
+runtime argv-matching path was deleted whole, as was ``parse_defaults``, which
+started an option at every line opening with a flag, wrapped description prose
+included; nothing else was rewritten except that two regex literals gained the
+``r`` prefix they always needed.
 
 Do not edit to add features.  A change wanted here almost certainly belongs in
 ``doc2wrapper/docopter.py``, which is the only importer.
@@ -304,16 +306,6 @@ def parse_atom(tokens, options):
         return [Argument(tokens.move())]
     else:
         return [Command(tokens.move())]
-
-
-def parse_defaults(doc):
-    # in python < 2.7 you can't pass flags=re.MULTILINE
-    split = re.split(r'\n *(<\S+?>|-\S+?)', doc)[1:]
-    split = [s1 + s2 for s1, s2 in zip(split[::2], split[1::2])]
-    options = [Option.parse(s) for s in split if s.startswith('-')]
-    #arguments = [Argument.parse(s) for s in split if s.startswith('<')]
-    #return options, arguments
-    return options
 
 
 def printable_usage(doc):

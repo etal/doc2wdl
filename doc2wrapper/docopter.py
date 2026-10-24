@@ -30,10 +30,9 @@ _OUTPUT_OPTIONS = ("--output", "-output")
 #: task_template.wdl and process_template.nf hard-code this identifier.
 OUTPUT_FILE_NAME = "output_file_name"
 
-# Where an options-block entry begins, once its indentation is stripped: the two
-# alternatives of the split in `_docopt.parse_defaults`, copied verbatim, which
-# decides the option set.  Mirroring it is what keeps each description with the
-# option it was written beside.
+# What may begin an options-block entry, once its indentation is stripped: the two
+# alternatives of the split in upstream docopt's `parse_defaults`, copied verbatim.
+# `_option_entries` decides which of the lines they match an entry starts at.
 _ENTRY = re.compile(r"<\S+?>|-\S+?")
 
 # Where textwrap, with which argparse wraps help, may break a line inside a word,
@@ -102,14 +101,14 @@ def parse(doc):
     #   value=False # default value; False if argcount=0; or if argcount=1, the
     #               # default value if given in help text, or None if not given
     #               # / there isn't one.
-    #   description # set below, not by docopt; "" where none was written
-    options = docopt.parse_defaults(doc)
+    #   description # set by `_documented_options`, not by docopt
+    options = _documented_options(doc)
+    documented = len(options)
     positionals = _parse_positionals(printable, usage, options)
-    # This follows `_parse_positionals` because that appends the options named only
-    # in the synopsis, which have no options-block entry and so take empty text.
-    descriptions = _option_descriptions(doc)
-    for option in options:
-        option.description = descriptions.get((option.short, option.long), "")
+    # `_parse_positionals` appends the options named only in the synopsis, which
+    # have no options-block entry and so no description.
+    for option in options[documented:]:
+        option.description = ""
     return usage, positionals, options
 
 
@@ -257,62 +256,78 @@ def _parse_positionals(printable, usage, options):
     return _positionals_of(pattern, set(_command_words(usage)))
 
 
-def _option_descriptions(doc):
-    """Map each documented option's ``(short, long)`` flags to its description.
+def _documented_options(doc):
+    """Read each options-block entry into a docopt ``Option`` with its description.
 
-    The flags parse with `Option.parse` to the identity `parse_defaults` gives the
-    option.  An option documented twice keeps its first description.
+    `Option.parse` is given the text upstream's `parse_defaults` gave it, the option
+    line from its first flag followed by the entry's later lines, joined by line
+    breaks, so the flags, the argument count and a ``[default: ...]`` are read as
+    upstream reads them.  Only where an entry starts and ends differs.
     """
-    descriptions = {}
-    for flags, lines in _option_entries(doc):
-        option = docopt.Option.parse(flags)
-        descriptions.setdefault((option.short, option.long), _joined(lines))
-    return descriptions
+    options = []
+    for entry, description in _option_entries(doc):
+        option = docopt.Option.parse("\n".join(entry))
+        option.description = _joined(description)
+        options.append(option)
+    return options
 
 
 def _option_entries(doc):
-    """Yield each options-block entry's flags and the lines of its description.
+    """Yield each options-block entry's lines and the lines of its description.
 
-    An entry starts where `parse_defaults` starts one, at a line opening with a
-    flag, never on the document's first line, which that split cannot see.  Its
-    flags end at the first two spaces, upstream's own rule, so where one space
-    separates them nothing on the option line is description.  `parse_defaults`
-    runs each entry to the next one or to the end of the document, so a section
-    heading or an epilog would be read as description; here an entry ends instead
-    at a blank line or at a line indented no deeper than the option's own.
+    An entry starts at a line opening with a flag, never on the document's first
+    line, and its first line is the option line from that flag on.  Upstream's
+    `parse_defaults` started an option at every such line, so a description whose
+    wrapped line begins with a flag declared an option of its own and could take
+    the enclosing option's ``[default: ...]``.  Here a line opening with a flag
+    starts an entry, and one opening with a ``<name>`` ends the current entry, only
+    when indented less than the description column, where the help formatter aligns
+    descriptions: that of the last description, until an option line with none on
+    it states its own on its first wrapped line.  With no column known, every such
+    line does so, as upstream's did.  Where the text after two spaces on an option
+    line itself opens with a flag, as in ``-q,  --quiet``, it is the rest of the
+    flags: it still begins the description, by upstream's rule, but states no
+    column.  The column is carried from one section to the next, so a
+    later section whose option lines are indented as deep as an earlier section's
+    descriptions would read as prose; no captured help text is laid out that way.
 
-    A wrapped description may begin a line with a flag, so a line opening with a
-    flag or a ``<name>`` ends the entry only when indented less than the
-    description.  An option line with no description on it takes the column of
-    the last description, since a help formatter aligns them, until its own first
-    wrapped line states one; with no column known, such a line is an option, as
-    `parse_defaults` reads it.
+    An entry ends at the next one or at a non-blank line indented no deeper than
+    its option, so a section heading or an epilog at that depth is no part of it,
+    and it runs across blank lines, since a ``[default: ...]`` may follow one.  Its
+    description is the first paragraph: it starts after the first two spaces on the
+    option line, upstream's rule, so where one space separates the flags from the
+    text nothing on that line is description, and it ends at the first blank line.
     """
-    flags, lines, entry_indent, column = "", None, 0, None
+    entry, lines, describing, entry_indent, column = None, [], False, 0, None
     for number, line in enumerate(doc.split("\n")):
         head = line.lstrip(" ")
         indent = len(line) - len(head)
-        opens = number > 0 and _ENTRY.match(head) is not None
-        if lines is not None:
-            if (
-                line.strip()
-                and indent > entry_indent
-                and not (opens and (column is None or indent < column))
-            ):
-                if not lines:
-                    column = indent
-                lines.append(line)
+        starts = (
+            number > 0
+            and _ENTRY.match(head) is not None
+            and (column is None or indent < column)
+        )
+        if entry is not None:
+            if not starts and (not line.strip() or indent > entry_indent):
+                entry.append(line)
+                if not line.strip():
+                    describing = False
+                elif describing:
+                    if not lines:
+                        column = indent
+                    lines.append(line)
                 continue
-            yield flags, lines
-            lines = None
-        if opens and head[0] == "-":
-            flags, _, description = head.partition("  ")
-            lines, entry_indent = [], indent
-            if description.strip():
+            yield entry, lines
+            entry = None
+        if starts and head[0] == "-":
+            entry, lines, describing, entry_indent = [head], [], True, indent
+            description = head.partition("  ")[2].lstrip()
+            if description:
                 lines.append(description)
-                column = len(line) - len(description.lstrip())
-    if lines is not None:
-        yield flags, lines
+                if not description.startswith("-"):
+                    column = len(line) - len(description)
+    if entry is not None:
+        yield entry, lines
 
 
 def _joined(lines):

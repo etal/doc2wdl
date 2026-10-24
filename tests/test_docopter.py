@@ -221,18 +221,94 @@ def test_a_description_ends_at_a_blank_line():
     assert descriptions(doc) == {("-v", None): "Be loud."}
 
 
-def test_a_wrapped_description_may_begin_a_line_with_a_flag():
-    """Indented as the description is, a flag continues it rather than starting one."""
+def options_of(doc):
+    """Each parsed option's flags, argument count and default, in order."""
+    _usage, _positionals, options = docopter.parse(doc)
+    return [(opt.short, opt.long, opt.argcount, opt.value) for opt in options]
+
+
+def test_a_flag_opening_a_wrapped_line_continues_the_description():
+    """Indented as the description is, the flag is prose, not an option of its own.
+
+    cnvkit's `import-rna` help wraps this way at 80 columns.  Read as an option, the
+    wrapped `--normal` took the `[Default: polish]` and was always passed.
+    """
     doc = """Usage: tool [options]
 
 Options:
-  --method NAME      Strategy, using the
-                     --normal samples only.
+  --method NAME      Strategy, which uses the
+                     --normal samples only. [Default: polish]
   -n, --normal FILE  Normal samples.
 """
+    assert options_of(doc) == [
+        (None, "--method", 1, "polish"),
+        ("-n", "--normal", 1, None),
+    ]
     docs = descriptions(doc)
-    assert docs[(None, "--method")] == "Strategy, using the --normal samples only."
+    assert docs[(None, "--method")] == (
+        "Strategy, which uses the --normal samples only. [Default: polish]"
+    )
     assert docs[("-n", "--normal")] == "Normal samples."
+
+
+def test_flags_separated_by_two_spaces_state_no_description_column():
+    """wget writes `-V,  --version`, so the text after two spaces is more flags.
+
+    Upstream's two-space rule ends the flags there, which loses `--version` as it
+    always has.  Taken as a description, that text would also put the column at
+    the long-only options' indentation, and every one of them would read as prose.
+    """
+    doc = """Usage: wget [OPTION]... [URL]...
+
+Startup:
+  -V,  --version                   display the version of Wget and exit
+  -b,  --background                go to background after startup
+       --config=FILE               specify config file to use
+       --no-config                 do not read any config file
+"""
+    assert options_of(doc) == [
+        ("-V", None, 0, False),
+        ("-b", None, 0, False),
+        (None, "--config", 1, None),
+        (None, "--no-config", 0, False),
+    ]
+
+
+def test_an_option_documented_twice_keeps_each_description():
+    """Each entry's description stays with the option it was written beside."""
+    doc = "Usage: tool [options]\n\nBasic:\n  -v  Be loud.\n\nMore:\n  -v  Be louder.\n"
+    _usage, _positionals, options = docopter.parse(doc)
+    assert [(opt.short, opt.description) for opt in options] == [
+        ("-v", "Be loud."),
+        ("-v", "Be louder."),
+    ]
+
+
+def test_an_entry_runs_across_a_blank_line_but_not_into_an_epilog():
+    """clap writes a `[default: ...]` as a paragraph of its own within the entry.
+
+    A paragraph indented no deeper than the options belongs to none of them, so
+    its `[default: ...]` is not the last option's.
+    """
+    doc = """Usage: tool [OPTIONS]
+
+Options:
+      --color <COLOR>
+          Whether to color the output
+
+          [default: auto]
+
+  -n, --number <N>
+          How many to keep
+
+Notes:
+  The [default: 5] of the old release no longer applies.
+"""
+    assert options_of(doc) == [
+        (None, "--color", 1, "auto"),
+        ("-n", "--number", 1, None),
+    ]
+    assert descriptions(doc)[(None, "--color")] == "Whether to color the output"
 
 
 def test_an_option_line_without_a_description_takes_a_known_column():
