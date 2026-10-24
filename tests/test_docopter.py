@@ -8,8 +8,8 @@ from doc2wrapper import docopter
 
 # A usage line whose `--tag` is declared as taking a value but written bare.  The
 # option parser then consumes the closing bracket as that value and bracket depth
-# desyncs, so parse_pattern raises.  `tests/corpus/help-cnvkit-batch.txt` fails the
-# same way on an opening bracket, where argparse writes `[-p [PROCESSES]]`.
+# desyncs, so parse_pattern raises.  Unlike an opening bracket after the option,
+# which is argparse's notation for an optional value, nothing here can be repaired.
 ARITY_OVERLOAD = """Usage: tool [--tag] <input>
 
 Options:
@@ -131,6 +131,67 @@ def test_unparseable_usage_line_degrades_instead_of_crashing(capsys):
     assert positionals == []
     assert [opt.long for opt in options] == ["--tag"]
     assert "could not read positional arguments" in capsys.readouterr().err
+
+
+# argparse writes an `nargs="?"` value as `[-p [N]]` and an `nargs="*"` one as
+# `[-n [FILES ...]]`; git writes an optional value with no space, as `-u[<mode>]`.
+# A group after a switch, or after an option whose value is attached, as in `-p4`,
+# is an optional positional.  `-x` and `--only` are named in the synopsis alone, and
+# keep the order the synopsis gives them.
+OPTIONAL_VALUES = """Usage: tool -v [<extra>] --loud [<more>] -p4 [<last>] {} [-x] [--only] <in>
+
+Options:
+  -v                 Be verbose.
+  --loud             Be loud.
+  -p, --processes [N]
+                     Processes to use.
+  -n [FILES ...]     Normal samples.
+  -u <mode>          Untracked mode.
+"""
+
+
+@pytest.mark.parametrize(
+    "spelled",
+    ["[-p [N]]", "[--processes [N]]", "[-vp [N]]", "[-n [FILES ...]]", "[-u[<mode>]]"],
+)
+def test_an_optional_value_in_brackets_belongs_to_its_option(spelled, capsys):
+    """The bracketed value is the option's, and other groups keep their brackets."""
+    _usage, positionals, options = docopter.parse(OPTIONAL_VALUES.format(spelled))
+    assert [(p.spellings, p.is_required) for p in positionals] == [
+        (["<extra>"], False),
+        (["<more>"], False),
+        (["<last>"], False),
+        (["<in>"], True),
+    ]
+    assert [(opt.short, opt.long, opt.argcount) for opt in options] == [
+        ("-v", None, 0),
+        (None, "--loud", 0),
+        ("-p", "--processes", 1),
+        ("-n", None, 1),
+        ("-u", None, 1),
+        ("-x", None, 0),
+        (None, "--only", 0),
+    ]
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("group", ["[A | B]", "[N <x>]", "[-q]", "[N [N ...]]"])
+def test_a_group_that_is_not_one_placeholder_keeps_its_brackets(group, capsys):
+    """A group that is not one placeholder keeps its brackets, so the retry fails.
+
+    A failed second reading discards the options it registered.  This one repairs
+    `[-p [N]]` and registers `--extra`, then fails on the group after the second
+    `-p`, which is not a single placeholder: an alternation, two arguments, a flag,
+    or the form argparse wrote for `nargs="*"` before Python 3.9.  The first reading
+    failed before it reached `--extra`, so the options are the documented one alone.
+    """
+    doc = (
+        f"Usage: tool [-p [N]] [--extra] [-p {group}] <in>\n\nOptions:\n  -p N  Gain.\n"
+    )
+    _usage, positionals, options = docopter.parse(doc)
+    assert positionals == []
+    assert [(opt.short, opt.long) for opt in options] == [("-p", None)]
+    assert "unmatched '('" in capsys.readouterr().err
 
 
 def test_help_and_version_options_are_not_task_inputs(help_text):

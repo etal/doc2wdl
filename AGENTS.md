@@ -173,15 +173,15 @@ Because the corpus is not a sample, its counts describe the corpus and not how o
 
 - **Hard failure: 3.** No single `usage:` marker: none at all (`tar`), a Cobra heading spelled `USAGE` without a colon (`gh repo clone`), or two markers (`python3 -m timeit`, whose docstring has both "Library usage:" and "Command line usage:").
   These raise `docopter.UsageNotFound`, which the CLI reports as a message and exit status 1.
-- **Degraded: 3.** `parse_pattern` raises on the synopsis, so the positionals degrade to empty with a warning on standard error, and the options survive.
-  `cnvkit.py batch` fails on argparse's notation for an optional value, an open defect below, and `python3 -m zipfile` on a wrapped synopsis line opening with `-c`, which is read as an options entry and declares `-t` a second time.
+- **Degraded: 2.** `parse_pattern` raises on the synopsis, so the positionals degrade to empty with a warning on standard error, and the options survive.
+  `python3 -m zipfile` fails on a wrapped synopsis line opening with `-c`, which is read as an options entry and declares `-t` a second time.
   In `samtools stats` the options block follows the synopsis with no blank line, so `printable_usage` reads it as usage.
-- **Parsed: 8.** Only `wgsim` yields exactly its positionals.
+- **Parsed: 9.** Only `wgsim` and `cnvkit.py batch` yield exactly their positionals.
   The rest run to completion with extra positionals: summary placeholders such as `[OPTIONS]` and `...` (`tabix`), option values the reader cannot attribute to an option (`ls`, which has no options block, and `bedtools intersect`, whose tab-indented block yields no options), an options block's prose (`htsfile`, swallowed as `samtools stats` is but without desyncing), or a placeholder split at its space (`jq`'s `<jq filter>`).
   argparse's `X [X ...]` for `nargs="+"` becomes two positionals, one required and one an optional array (`miniwdl check`), and after an option, as in `-n NORMAL [NORMAL ...]`, the repetition becomes a positional (`cnvkit.py import-rna`).
 
 The reliable shape is a single blank-line-terminated synopsis naming at most one fixed subcommand, where no flag's arity differs between the options block and the synopsis and no wrapped line of the synopsis begins with a flag.
-argparse-generated help departs from it in two ways: it writes an optional value in brackets, and it wraps the synopsis at `COLUMNS`, so whether a synopsis line opens with a flag depends on the width: `python3 -m zipfile` degrades at 80 columns and parses at 120.
+argparse-generated help departs from it by wrapping the synopsis at `COLUMNS`, so whether a synopsis line opens with a flag depends on the width: `python3 -m zipfile` degrades at 80 columns and parses at 120.
 Hand-written C help departs from it by placing the options block directly under the synopsis (`samtools stats`, `htsfile`) or by leaving the block out (`ls`).
 Both fixtures in `tests/example/` sit inside the shape, which is why they were never a sample.
 
@@ -230,10 +230,6 @@ An option value placeholder such as `-t FILE` would be real evidence, but `Optio
 So in `help-zipfile.txt` the synopsis line opening with `-c` declares `-t` a second time, and docopt rejects `-t` as ambiguous.
 Skipping entries inside the usage paragraph would let `help-zipfile.txt` parse, but it would also turn `help-samtools-stats.txt` from degraded into parsed with 208 positionals read from its options block, so the two cases need a rule that tells a wrapped synopsis line from an options block, which none yet does.
 An options block indented with tabs, as the bedtools subcommands' are, yields no options at all, because an entry starts only after spaces.
-
-**argparse's notation for an optional value desyncs the synopsis.** argparse writes an option with `nargs="?"` or `nargs="*"` with its value in brackets, as in `[-p [PROCESSES]]`, because the value may be left out.
-The options block declares `-p` as taking a value, so the option parser takes the opening bracket as that value and bracket depth desyncs, as `ARITY_OVERLOAD` in `tests/test_docopter.py` does with a closing bracket.
-In `tests/corpus/help-cnvkit-batch.txt`, `[-p [PROCESSES]]` and `[-n [FILES ...]]` raise `unmatched '('`, and with both rewritten without the inner brackets the synopsis parses.
 
 Smaller known wrongness, low priority: help-text notation leaks into flags, so
 samtools' `--region[s]-file FILE` becomes a literal flag `--region[s]-file`.
@@ -345,6 +341,22 @@ The column is carried from one section to the next, so a later section whose opt
 Both fixtures generate byte-identical WDL and Nextflow, verified by checksum, and every corpus file keeps its class.
 In the corpus, `cnvkit.py batch` loses its stray `--count` and `--diagram`, and `cnvkit.py import-rna` its stray `--normal`, where `--normalize-method` now takes `polish`; both documents pass `miniwdl check`.
 Over 196 help texts, the fixtures, the corpus and 180 captured from tools on the personal workstation on 2026-10-24, 84 option declarations disappear, each a fragment of wrapped prose or a second reading of a flag that keeps its first, and one appears, in R's tab-separated help, which the reader already misread.
+
+**D18** — argparse's notation for an optional value desynchronized the synopsis.
+argparse writes the value of an option with `nargs="?"` or `nargs="*"` in brackets, as in `[-p [PROCESSES]]` and `[-n [FILES ...]]`, because the value may be left out, while the options block declares the option as taking a value.
+`parse_shorts` and `parse_long` therefore read the opening bracket as the value, the group's closing bracket ended the enclosing group, and `parse_pattern` raised `unmatched '('`, so `cnvkit.py batch` lost its one positional.
+When a synopsis fails to parse, `docopter._parse_positionals` now reads it a second time, with the brackets removed from each group that directly follows an option the parser would give the next token as its value and that holds one placeholder, optionally followed by `...`.
+The test of the option mirrors the two functions' own rules, an exact match for a long option without `=` and, for a stack of short options, a first value-taking letter that is the last, and it runs on `parse_pattern`'s tokens rather than on the text, so git's attached `-u[<mode>]` is found too.
+Any other group keeps its brackets, among them an alternation, a group of two arguments, a group that opens with a flag, and the form Python releases before 3.9 wrote for `nargs="*"`, `[FILES [FILES ...]]`, which still degrades.
+The second reading runs only after the first fails, never as a pre-pass: of the 1,948,716 patterns of one to six tokens drawn from `[ ] ( ) | -p -q -pq --proc --flag A`, with `-p, --proc` taking a value, a pre-pass would rewrite 688, and 32 of those parse as written, each with a bracket left unclosed, such as `tool [-p [A]`.
+It runs on a copy of the options-block entries, so a synopsis that fails both readings leaves the option list and the warning exactly as before.
+Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24, 190 records are byte-identical and six move from degraded to parsed.
+`cnvkit.py batch`, in both its captures, yields exactly its one positional, and `tox` yields one, its subcommand placeholder with the arguments after it.
+`git-commit` yields 11 positionals, among them fragments of `--[no-]status`, and `bsd-make` and `gnu-make`, whose options blocks follow the synopsis with no blank line, yield 142 and 180 positionals where the desynchronization used to hide them.
+Those three also gain 39 option declarations named only in what is read as the synopsis, such as `--just-print,` with its comma; no option-block entry or description changes in any of the six.
+Both fixtures generate byte-identical WDL and Nextflow, verified by checksum, and the corpus's `cnvkit.py batch` gains `Array[File] sample_fnames` and passes `miniwdl check` and `nextflow lint`.
+The option keeps its argument count of 1, so the generated input passes `--processes` with a value or not at all, and cannot pass the bare flag, which cnvkit reads as "use every CPU".
+Not covered: `nargs="+"`, written `-n NORMAL [NORMAL ...]`, whose group follows the value rather than the option and still becomes a positional, and an optional prefix of a value, such as curl's `--proxy [protocol://]host`, which the rule would misread in a synopsis that otherwise parses; no captured synopsis does.
 
 ### Working on the vendored parser
 

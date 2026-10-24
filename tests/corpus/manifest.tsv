@@ -12,10 +12,10 @@ name	outcome	stream	version	command	shape
 tar	usage-not-found	stdout	bsdtar 3.5.3	/usr/bin/tar --help	no usage: marker
 gh-repo-clone	usage-not-found	stdout	gh 2.102.0	gh repo clone --help	Cobra heading USAGE, without a colon
 timeit	usage-not-found	stdout	Python 3.13.12	python3 -m timeit -h	two usage: markers in one docstring
-cnvkit-batch	degraded	stdout	CNVkit 0.9.15.dev0	cnvkit.py batch -h	argparse writes an optional value in brackets, as in [-p [PROCESSES]], and the option takes the opening bracket as its value
 zipfile	degraded	stdout	Python 3.13.12	python3 -m zipfile -h	wrapped synopsis line opening with -c is read as an option entry, declaring -t twice
 samtools-stats	degraded	stdout	samtools 1.23.1	samtools stats --help	options block follows the synopsis with no blank line and is read as usage
 wgsim	parsed	stderr	wgsim 1.23.1	wgsim	positionals recovered cleanly
+cnvkit-batch	parsed	stdout	CNVkit 0.9.15.dev0	cnvkit.py batch -h	positionals recovered cleanly once the brackets argparse writes around an optional value, as in [-p [PROCESSES]], are removed on a second reading
 miniwdl-check	parsed	stdout	miniwdl 1.14.2	miniwdl check --help	argparse's WDL_URI [WDL_URI ...] read as two positionals
 tabix	parsed	stdout	htslib 1.23.1	tabix --help	[OPTIONS] and ... read as positionals
 bedtools-intersect	parsed	stderr	bedtools 2.31.1	bedtools intersect --help	tab-indented options block yields no options, so the values of -a and -b are read as positionals

@@ -45,6 +45,10 @@ _WRAPPED_WORD = re.compile(
     r"|([\w!\"'&.,?]-{2,})\n(?=\w)"
 )
 
+# The symbols `parse_pattern` pads with spaces before splitting its source, copied
+# verbatim, so that splitting the padded text yields the tokens it reads.
+_PATTERN_SYMBOL = re.compile(r"([\[\]\(\)\|]|\.\.\.)")
+
 
 class UsageNotFound(Exception):
     """The help text has no single ``usage:`` section to read a command line from."""
@@ -243,17 +247,115 @@ def _parse_positionals(printable, usage, options):
     token of what it is given and treats the next as the program name, so passing
     the marker-stripped `usage` instead makes it eat the program name and lose the
     first positional.  The two arguments are not interchangeable.
+
+    A pattern that does not parse is read once more with the brackets around each
+    option's value removed, as `_without_value_brackets` describes.  The retry runs
+    on a copy of the options-block entries, and `options` takes the options it
+    appends only when it succeeds, so a usage line that parses neither way leaves
+    `options` exactly as the first attempt did, and the warning reports that
+    attempt's error.  A usage line that parses as written is never rewritten.
     """
+    entries = options[:]
+    formal = docopt.formal_usage(printable)
     try:
-        pattern = docopt.parse_pattern(docopt.formal_usage(printable), options)
+        pattern = docopt.parse_pattern(formal, options)
     except docopt.DocoptLanguageError as why:
-        print(
-            "Warning: could not read positional arguments from the usage line:",
-            why,
-            file=sys.stderr,
-        )
-        return []
+        try:
+            pattern = docopt.parse_pattern(
+                _without_value_brackets(formal, entries), entries
+            )
+        except docopt.DocoptLanguageError:
+            print(
+                "Warning: could not read positional arguments from the usage line:",
+                why,
+                file=sys.stderr,
+            )
+            return []
+        options[:] = entries
     return _positionals_of(pattern, set(_command_words(usage)))
+
+
+def _without_value_brackets(formal, options):
+    """Remove the brackets around an option's value: ``-p [N]`` becomes ``-p N``.
+
+    argparse writes the value of an ``nargs="?"`` or ``nargs="*"`` option in
+    brackets, as in ``[-p [PROCESSES]]`` and ``[-n [FILES ...]]``, while the
+    options block declares the option as taking a value.  `parse_shorts` and
+    `parse_long` then read the opening bracket as that value, and the group's
+    closing bracket ends an enclosing group early.  The brackets are found among
+    `parse_pattern`'s own tokens rather than in the text, because a tool may write
+    them with no space after the option, as git writes ``[-u[<mode>]]``.  Only a
+    group holding one placeholder, optionally followed by ``...``, loses its
+    brackets; any other group after such an option stays as written.
+    """
+    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    # A copy, so that the caller's list, which `parse_pattern` then appends to,
+    # receives no option from this scan.  The scan registers long options only, so
+    # sharing the list would place every long option the synopsis alone names ahead
+    # of every such short option, rather than in the order the synopsis gives.
+    known = options[:]
+    removed = set()
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        index += 1
+        if not _takes_next_token(token, known):
+            continue
+        closing = _placeholder_group(tokens, index)
+        if closing is not None:
+            removed.update((index, closing))
+            index += 1
+        # The token the option reads as its value is never an option itself.
+        index += 1
+    return " ".join(token for i, token in enumerate(tokens) if i not in removed)
+
+
+def _takes_next_token(token, known):
+    """Would `parse_long` or `parse_shorts` read the next token as this one's value?
+
+    The rules are theirs as `parse_pattern` runs them: a long option takes the next
+    token when the token carries no ``=`` and the option of exactly its spelling
+    takes a value; a stack of short options takes it when the first of its letters
+    that takes a value is its last letter, since any letters after that one are the
+    value.  `parse_long` registers a long option it does not know with the argument
+    count its token shows, which decides how a later occurrence reads, so this
+    function appends it to `known` in the same way.  `parse_shorts` registers an
+    unknown short option as taking no value, which can never make it take the next
+    token, so that registration is left out.  A spelling declared twice is not told
+    apart, because both functions then raise and the retry fails however the
+    spelling is read.
+    """
+    if token.startswith("--") and token != "--":
+        long, eq, _value = token.partition("=")
+        similar = [option for option in known if option.long == long]
+        if not similar:
+            known.append(docopt.Option(None, long, 1 if eq == "=" else 0))
+        return eq != "=" and any(option.argcount for option in similar)
+    if token.startswith("-") and token not in ("-", "--"):
+        letters = token.lstrip("-")
+        for position, letter in enumerate(letters, 1):
+            short = "-" + letter
+            if any(option.argcount for option in known if option.short == short):
+                return position == len(letters)
+    return False
+
+
+def _placeholder_group(tokens, opening):
+    """Index of the ``]`` closing ``[ N ]`` or ``[ N ... ]`` at `tokens[opening]`.
+
+    None unless the group holds exactly one placeholder, a token that is neither a
+    pattern symbol nor a flag, optionally followed by ``...``.  A wider rule would
+    read the first token of any group as the value: ``-p [N <x>]`` would make
+    ``<x>`` required, and ``-s [-r host]`` would read ``-r`` as the value of ``-s``.
+    """
+    group = tokens[opening : opening + 4]
+    if group[:1] != ["["] or len(group) < 3:
+        return None
+    placeholder = group[1]
+    if placeholder.startswith("-") or _PATTERN_SYMBOL.fullmatch(placeholder):
+        return None
+    closing = 3 if group[2] == "..." else 2
+    return opening + closing if group[closing : closing + 1] == ["]"] else None
 
 
 def _documented_options(doc):
