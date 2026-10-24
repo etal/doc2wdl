@@ -59,16 +59,12 @@ Known issues
   A description ends at a blank line or at a line indented no deeper than its option, so only its first paragraph is kept, and a positional argument's `parameter_meta` entry lists only its alternative spellings, if it has any.
 - A `count` option such as `-v` becomes a Boolean, so the generated task can pass it at most once.
 
-Reading help text is best-effort by nature, and the limits are measured rather than
-guessed. Over a corpus of 36 help texts, 34 of them captured from real tools, positional
-arguments are recovered cleanly from about a quarter and usably from about a third, and
-about one in ten produces no usable usage line at all. The reliable shape is a single
-usage synopsis terminated by a blank line, naming at most one fixed subcommand, in which
-no flag's arity differs between the options list and the synopsis. That describes
-argparse-generated help well and hand-written getopt-style help poorly: where the options
-list follows the synopsis with no blank line, or a heading reads `USAGE` without a colon,
-or the same flag appears both bare and with a value, the result is a warning and a partial
-task rather than a complete one.
+Reading help text is best-effort by nature, and its limits are recorded rather than guessed.
+`tests/corpus/` holds 14 help texts captured from real tools, chosen to represent the shapes the reader meets rather than as a sample, and `tests/corpus/manifest.tsv` records the command that produced each and what the reader makes of it.
+Three of the 14 produce no usable usage line at all, three yield the options but no positional arguments, with a warning, and eight parse, of which only one yields exactly the tool's positional arguments; the others add placeholders such as `[OPTIONS]`, option values or prose, or split one argument in two.
+The reliable shape is a single usage synopsis terminated by a blank line, naming at most one fixed subcommand, in which no flag's arity differs between the options list and the synopsis, and no wrapped line begins with a flag.
+Hand-written getopt-style help departs from it when the options list follows the synopsis with no blank line, and a Cobra heading that reads `USAGE` without a colon is not found at all.
+argparse-generated help departs from it when an option's value is optional, which argparse writes in brackets, and whenever wrapping at the terminal width starts a line with a flag, so the width at which help text was captured can decide the outcome.
 
 None of that applies to the `argparse` subcommand, which introspects the parser object directly and parses no text.
 It is the better route for a Python tool: it emits one document for a parser with subcommands.

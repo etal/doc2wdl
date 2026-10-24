@@ -1,0 +1,16 @@
+usage: __main__.py [-h] (-l <zipfile> | -e <zipfile> <output_dir> |
+                   -c <name> [<file> ...] | -t <zipfile>)
+                   [--metadata-encoding <encoding>]
+
+A simple command-line interface for zipfile module.
+
+options:
+  -h, --help            show this help message and exit
+  -l, --list <zipfile>  Show listing of a zipfile
+  -e, --extract <zipfile> <output_dir>
+                        Extract zipfile into target dir
+  -c, --create <name> [<file> ...]
+                        Create zipfile from sources
+  -t, --test <zipfile>  Test if a zipfile is valid
+  --metadata-encoding <encoding>
+                        Specify encoding of member names for -l, -e and -t

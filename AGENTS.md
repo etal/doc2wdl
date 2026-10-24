@@ -67,7 +67,8 @@ doc2wrapper/
   _docopt.py     VENDORED: the static grammar subset of docopt 0.6.2
   templates/     Jinja2 templates, one document and one block template per target:
                  document_template.{wdl,nf}, task_template.wdl, process_template.nf
-tests/           pytest suite; `tests/example/` holds captured help texts and a Makefile
+tests/           pytest suite; `tests/example/` holds the two generation fixtures and a
+                 Makefile, `tests/corpus/` the conformance corpus and its manifest
 ```
 
 Data flow is strictly one-directional: **reader → `dict` of template kwargs → writer**.
@@ -143,7 +144,10 @@ invisible through a wheel inspection and only surfaced on install. Verify with:
 rm -rf build doc2wrapper.egg-info && python -m venv /tmp/v && /tmp/v/bin/pip install .
 ```
 
-`tests/example/Makefile` only records how each captured help text was produced; generation and checking live in the pytest suite.
+`tests/example/Makefile` only records how each of the two generation fixtures was produced; generation and checking live in the pytest suite.
+`tests/corpus/capture.py` recaptures the conformance corpus from `tests/corpus/manifest.tsv` under the pinned environment its docstring describes, and the manifest's header records the `PATH` the committed captures were taken with.
+That `PATH` puts the `cnvkit` environment's miniwdl 1.14.2 ahead of the `dev` environment's 1.15.0, so it is for capture only and not for running the checkers.
+The suite never runs `capture.py`, because a recapture changes bytes with each tool release: review the diff and run `tests/test_corpus.py`, where a class that moves reflects the new help text rather than the reader, and update the manifest's version and outcome columns to match.
 
 The README's flagship argparse example, `cnvlib.commands.AP`, needs `cnvlib`, which the `cnvkit` environment provides.
 That import works only if you call the environment's interpreter directly, because `conda run -n cnvkit` and `conda activate` both fail on this machine with a broken activation hook:
@@ -163,32 +167,23 @@ Everything below was verified by execution on 2026-08-16 unless dated otherwise.
 
 ### What the help-text reader will and will not handle
 
-Measured, not estimated, over a corpus of 36 help texts — 34 captured from real tools on
-this machine, spanning argparse-generated, hand-written getopt C, and Go/Cobra styles,
-plus 2 clearly-labelled synthetic cases covering shapes no installed tool produced. The
-corpus lived in `/tmp/d2w-corpus/` and is not preserved; re-capturing it is open
-work. Counts against all 36 unless stated:
+`tests/corpus/` holds 14 help texts captured from real tools on 2026-10-24, chosen to represent the shapes the reader meets rather than as a sample.
+`tests/corpus/manifest.tsv` records, for each file, the command that produced it, the tool's version, the outcome class, and what the reader makes of the file; `tests/test_corpus.py` asserts every file's class, and `cut -s -f2 tests/corpus/manifest.tsv | sed 1d | sort | uniq -c` counts them.
+Because the corpus is not a sample, its counts describe the corpus and not how often a shape occurs among tools; this file states no rates, since a rate measured over files that are not committed cannot be reproduced.
 
-- **Hard failure: 4 (11%).** No single `usage:` marker — absent entirely (`tar`), a
-  heading spelled `USAGE` without a colon (`gh`, a Cobra template, while `docker`'s Cobra
-  template does use `Usage:`), a truncated footer-only dump (`curl --help all`), or two
-  markers in one document. These raise `docopter.UsageNotFound`, which the CLI reports as
-  a message and exit status 1.
-- **Degraded: 3 (8%).** A flag declared `argcount=1` in the options block but written bare
-  in the synopsis makes the option parser eat the next bracket token and desync bracket
-  depth, so `parse_pattern` raises far from the real cause. Positionals degrade to empty
-  with a warning; the options survive.
-- **Parsed: 29.** Of the 31 files whose tool genuinely has positional arguments,
-  **7 (23%) recover them cleanly** and 11 (35%) do so once capitalized `[OPTIONS]`-style
-  summary placeholders are filtered out. The previous behaviour was 0 of 31. The rest run
-  to completion but mix real positionals with option-value placeholders or with prose:
-  where a getopt-style tool's option list follows the synopsis with no blank line,
-  `printable_usage` swallows the whole options block into the usage text.
+- **Hard failure: 3.** No single `usage:` marker: none at all (`tar`), a Cobra heading spelled `USAGE` without a colon (`gh repo clone`), or two markers (`python3 -m timeit`, whose docstring has both "Library usage:" and "Command line usage:").
+  These raise `docopter.UsageNotFound`, which the CLI reports as a message and exit status 1.
+- **Degraded: 3.** `parse_pattern` raises on the synopsis, so the positionals degrade to empty with a warning on standard error, and the options survive.
+  `cnvkit.py batch` fails on argparse's notation for an optional value, and `python3 -m zipfile` on a line opening with a flag read as an options entry; both are open defects below.
+  In `samtools stats` the options block follows the synopsis with no blank line, so `printable_usage` reads it as usage.
+- **Parsed: 8.** Only `wgsim` yields exactly its positionals.
+  The rest run to completion with extra positionals: summary placeholders such as `[OPTIONS]` and `...` (`tabix`), option values the reader cannot attribute to an option (`ls`, which has no options block, and `bedtools intersect`, whose tab-indented block yields no options), an options block's prose (`htsfile`, swallowed as `samtools stats` is but without desyncing), or a placeholder split at its space (`jq`'s `<jq filter>`).
+  argparse's `X [X ...]` for `nargs="+"` becomes two positionals, one required and one an optional array (`miniwdl check`), and after an option, as in `-n NORMAL [NORMAL ...]`, the repetition becomes a positional (`cnvkit.py import-rna`).
 
-The reliable shape is a single blank-line-terminated synopsis naming at most one fixed
-subcommand, where no flag's arity differs between the options block and the synopsis.
-That covers argparse-generated tools well and hand-written C tools poorly. Both bundled
-fixtures sit inside it, which is why they were never a sample.
+The reliable shape is a single blank-line-terminated synopsis naming at most one fixed subcommand, where no flag's arity differs between the options block and the synopsis and no wrapped line, of prose or of the synopsis, begins with a flag.
+argparse-generated help departs from it in two ways: it writes an optional value in brackets, and it wraps prose and synopsis at `COLUMNS`, so whether a line opens with a flag depends on the width: `python3 -m zipfile` degrades at 80 columns and parses at 120.
+Hand-written C help departs from it by placing the options block directly under the synopsis (`samtools stats`, `htsfile`) or by leaving the block out (`ls`).
+Both fixtures in `tests/example/` sit inside the shape, which is why they were never a sample.
 
 **The argparse reader has no such limits** — it reads a live parser object and needs no text parsing at all.
 `cnvlib.commands.AP`, the README's flagship example, unpacks to 35 tasks under one `version 1.1`.
@@ -231,11 +226,16 @@ No name-based rule was adopted: a filename-word list scored 65 of 83, splits one
 The angle-bracket convention is no signal either, since cnvkit's `targets` and samtools' `region` are both bare words.
 An option value placeholder such as `-t FILE` would be real evidence, but `Option.parse` discards it; `docopter._option_entries` now yields the flags side of each options-block entry, which is where reading one would start.
 
-**Description prose that wraps onto a flag declares an option.** `parse_defaults` starts an option at any line opening with a flag, so a description whose wrapped line begins `--normal` declares a second option.
-Measured on cnvkit's `import-rna` help at `COLUMNS=80`, the stray option takes the surrounding `[Default: polish]`, declares `String normal = "polish"`, and so always passes `--normal polish`, while the real `-n, --normal` becomes `normal_2`.
+**A wrapped line that opens with a flag declares an option.** `parse_defaults` starts an option at any line of the help text opening with a flag, so a description whose wrapped line begins `--normal` declares a second option.
+Measured on cnvkit's `import-rna` help at `COLUMNS=80`, kept as `tests/corpus/help-cnvkit-import-rna.txt`, the stray option takes the surrounding `[Default: polish]`, declares `String normal = "polish"`, and so always passes `--normal polish`, while the real `-n, --normal` becomes `normal_2`.
+Where the synopsis names a flag that such a line repeats, docopt rejects the flag as ambiguous, the synopsis no longer parses, and the positionals are lost: `help-cnvkit-batch.txt` declares `--diagram` twice from wrapped prose, and in `help-zipfile.txt` a wrapped synopsis line opening with `-c` declares `-t` a second time.
 Over `cnvlib.commands.AP`, four flags are read twice at `COLUMNS=80`, one at 120 and none at 60, 100 or 200.
 `docopter._option_entries` already tells such a line from an entry by the description column; making it the authority on the option set, rather than `parse_defaults`, changes which options exist, so it needs checksums of its own.
 An options block indented with tabs, as the bedtools subcommands' are, yields no options at all, because the split matches spaces only.
+
+**argparse's notation for an optional value desyncs the synopsis.** argparse writes an option with `nargs="?"` or `nargs="*"` with its value in brackets, as in `[-p [PROCESSES]]`, because the value may be left out.
+The options block declares `-p` as taking a value, so the option parser takes the opening bracket as that value and bracket depth desyncs, as `ARITY_OVERLOAD` in `tests/test_docopter.py` does with a closing bracket.
+In `tests/corpus/help-cnvkit-batch.txt`, `[-p [PROCESSES]]` and `[-n [FILES ...]]` raise `unmatched '('`; with both rewritten without the inner brackets, the synopsis fails only on the repeated `--diagram` above, and with that line also removed it parses.
 
 Smaller known wrongness, low priority: help-text notation leaks into flags, so
 samtools' `--region[s]-file FILE` becomes a literal flag `--region[s]-file`.

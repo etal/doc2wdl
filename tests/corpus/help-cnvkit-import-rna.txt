@@ -1,0 +1,60 @@
+usage: cnvkit.py import-rna [-h] [-f NAME] -g FILE [-c FILE]
+                            [--max-log2 FLOAT] [--min-sample-fraction FLOAT]
+                            [--normalize-method NAME] [-n NORMAL [NORMAL ...]]
+                            [-d PATH] [-o FILE] [--no-gc] [--no-txlen]
+                            [--diploid-parx-genome DIPLOID_PARX_GENOME]
+                            FILES [FILES ...]
+
+positional arguments:
+  FILES                 Tabular files with Ensembl gene ID and number of reads
+                        mapped to each gene, from RSEM or another transcript
+                        quantifier.
+
+options:
+  -h, --help            show this help message and exit
+  -f, --format NAME     Input format name: 'rsem' for RSEM gene-level read
+                        counts (*_rsem.genes.results), or 'counts' for generic
+                        2-column gene IDs and their read counts (e.g. TCGA
+                        level 2 RNA expression).
+  -g, --gene-resource FILE
+                        Location of gene info table from Ensembl BioMart.
+  -c, --correlations FILE
+                        Correlation of each gene's copy number with
+                        expression. Output of cnv_expression_correlate.py.
+  --max-log2 FLOAT      Maximum log2 ratio in output. Observed values above
+                        this limit will be replaced with this value. [Default:
+                        3.0]
+  --min-sample-fraction FLOAT
+                        Keep a gene only if it is expressed (read count >= 1)
+                        in at least this fraction of samples. Lower this for
+                        single-cell or sparse cohorts, where most genes are
+                        expressed in fewer than half of cells; values below
+                        ~0.2 admit genes whose log2 ratios are likely noise.
+                        [Default: 0.5]
+  --normalize-method NAME
+                        Read-depth normalization strategy. 'polish' (default)
+                        is the historical cohort-wide median polish anchored
+                        on the normal median. 'size-factors' estimates
+                        DESeq2-style median-of-ratios size factors from the
+                        --normal control samples only, with leave-one-out
+                        anchoring so each normal's .cnr retains QC signal;
+                        this avoids the polish's cohort-composition dependence
+                        and is recommended with three or more normals.
+                        [Default: polish]
+  -n, --normal NORMAL [NORMAL ...]
+                        Normal samples (same format as `gene_counts`) to be
+                        used as a control to when normalizing and re-centering
+                        gene read depth ratios. All filenames following this
+                        option will be used.
+  -d, --output-dir PATH
+                        Directory to write a CNVkit .cnr file for each input
+                        sample. [Default: .]
+  -o, --output FILE     Output file name (summary table).
+  --diploid-parx-genome DIPLOID_PARX_GENOME
+                        Considers the given human genome's PAR of chromosome X
+                        as autosomal. Example: 'grch38' (or the UCSC name
+                        'hg38')
+
+To disable specific automatic bias corrections:
+  --no-gc               Skip GC correction.
+  --no-txlen            Skip transcript length correction.

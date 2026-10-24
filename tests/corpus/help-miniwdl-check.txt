@@ -1,0 +1,32 @@
+usage: miniwdl check [-h] [--strict] [--suppress Warning1,Warning2] [--no-suppress] [-p DIR]
+                     [--no-outside-imports] [--no-quant-check] [--debug]
+                     WDL_URI [WDL_URI ...]
+
+Load and typecheck a WDL document, showing an outline with lint warnings.
+
+Individual lint warnings can be suppressed by a WDL comment containing !WarningName on the
+same line or the following line, e.g.:
+    Int? foo = 42  # !UnnecessaryQuantifier
+    Int bar = foo + 1
+    # Lorem ipsum dolor sit (!OptionalCoercion)
+
+positional arguments:
+  WDL_URI               WDL document filename/URI
+
+options:
+  -h, --help            show this help message and exit
+  --strict              exit with nonzero status code if any lint warnings are shown (in addition
+                        to syntax and type errors)
+  --suppress Warning1,Warning2
+                        comma-separated set of warnings to disable globally e.g.
+                        StringCoercion,NonemptyCoercion
+  --no-suppress         show warnings even if they have inline suppression comments
+
+language:
+  -p, --path DIR        local directory to search for imports (can supply multiple times)
+  --no-outside-imports  deny local imports from outside directory of main WDL file (or --path)
+  --no-quant-check      relax static typechecking of optional types, and permit coercion of T to
+                        Array[T] (discouraged; for backwards compatibility with older WDL)
+
+debugging:
+  --debug               maximally verbose logging & exception tracebacks

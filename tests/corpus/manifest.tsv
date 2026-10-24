@@ -1,0 +1,25 @@
+# Help texts captured from real tools, chosen to represent the shapes the help-text
+# reader meets rather than as a sample.
+# Columns, separated by tabs: the file is help-<name>.txt; outcome is the class
+# tests/test_corpus.py asserts, one of usage-not-found, degraded or parsed; stream
+# is where the command writes its help; version is the tool's at capture time;
+# command is run by capture.py, which also pins the environment; shape says what
+# the reader makes of the file and why.  Captured on macOS 26.6.2, with the bin
+# directory of the cnvkit conda environment first on PATH and that of the dev
+# environment second, which puts their samtools, htslib and wgsim ahead of any
+# others and the cnvkit environment's miniwdl 1.14.2 ahead of the dev one's 1.15.0.
+name	outcome	stream	version	command	shape
+tar	usage-not-found	stdout	bsdtar 3.5.3	/usr/bin/tar --help	no usage: marker
+gh-repo-clone	usage-not-found	stdout	gh 2.102.0	gh repo clone --help	Cobra heading USAGE, without a colon
+timeit	usage-not-found	stdout	Python 3.13.12	python3 -m timeit -h	two usage: markers in one docstring
+cnvkit-batch	degraded	stdout	CNVkit 0.9.15.dev0	cnvkit.py batch -h	argparse writes an optional value in brackets, as in [-p [PROCESSES]], and the option takes the opening bracket as its value; wrapped prose opening with --diagram also declares that flag twice
+zipfile	degraded	stdout	Python 3.13.12	python3 -m zipfile -h	wrapped synopsis line opening with -c is read as an option entry, declaring -t twice
+samtools-stats	degraded	stdout	samtools 1.23.1	samtools stats --help	options block follows the synopsis with no blank line and is read as usage
+wgsim	parsed	stderr	wgsim 1.23.1	wgsim	positionals recovered cleanly
+miniwdl-check	parsed	stdout	miniwdl 1.14.2	miniwdl check --help	argparse's WDL_URI [WDL_URI ...] read as two positionals
+tabix	parsed	stdout	htslib 1.23.1	tabix --help	[OPTIONS] and ... read as positionals
+bedtools-intersect	parsed	stderr	bedtools 2.31.1	bedtools intersect --help	tab-indented options block yields no options, so the values of -a and -b are read as positionals
+htsfile	parsed	stdout	htslib 1.23.1	htsfile --help	options block follows the synopsis with no blank line, and its prose is read as positionals
+ls	parsed	stderr	macOS 26.6.2	/bin/ls --help	no options block, so the value of -D is read as a positional
+jq	parsed	stdout	jq 1.7.1-apple	jq --help	<jq filter> split at its space
+cnvkit-import-rna	parsed	stdout	CNVkit 0.9.15.dev0	cnvkit.py import-rna -h	wrapped prose opening with --normal declares a second option; the repeat in -n NORMAL [NORMAL ...] is read as a positional

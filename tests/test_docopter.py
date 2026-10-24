@@ -8,8 +8,8 @@ from doc2wrapper import docopter
 
 # A usage line whose `--tag` is declared as taking a value but written bare.  The
 # option parser then consumes the closing bracket as that value and bracket depth
-# desyncs, so parse_pattern raises.  Measured on a corpus of real help texts, this
-# is the single most common way a present-and-plausible usage line fails to parse.
+# desyncs, so parse_pattern raises.  `tests/corpus/help-cnvkit-batch.txt` fails the
+# same way on an opening bracket, where argparse writes `[-p [PROCESSES]]`.
 ARITY_OVERLOAD = """Usage: tool [--tag] <input>
 
 Options:
@@ -124,8 +124,8 @@ def test_subcommand_is_excluded_from_every_alternative():
 def test_unparseable_usage_line_degrades_instead_of_crashing(capsys):
     """Options survive when only the usage line is unreadable.
 
-    A partial task the user finishes by hand beats a traceback: roughly one real
-    help text in ten hits this, and the options are still perfectly recoverable.
+    A partial task the user finishes by hand beats a traceback: the degraded files
+    in `tests/corpus` hit this, and their options are still recoverable.
     """
     _usage, positionals, options = docopter.parse(ARITY_OVERLOAD)
     assert positionals == []

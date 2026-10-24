@@ -1,0 +1,8 @@
+Usage: htsfile [-chHv] FILE...
+       htsfile --copy [-v] FILE DESTFILE
+Options:
+  -c, --view         Write textual form of FILEs to standard output
+  -C, --copy         Copy the exact contents of FILE to DESTFILE
+  -h, --header-only  Display only headers in view mode, not records
+  -H, --no-header    Suppress header display in view mode
+  -v, --verbose      Increase verbosity of warnings and diagnostics
