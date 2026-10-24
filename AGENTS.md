@@ -352,5 +352,5 @@ The whole-tree reformat that adopted it is a commit of its own, listed in `.git-
 
 ## Handoff
 
-Committing and pushing are handoff actions: report the proposed commands and wait, rather
-than running them unprompted.
+Commit completed, verified work without waiting for approval.
+Pushing to `main` remains a handoff action: report it and wait, unless the maintainer has asked for the push.
