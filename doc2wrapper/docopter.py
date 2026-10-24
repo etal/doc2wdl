@@ -10,7 +10,13 @@ import sys
 from dataclasses import dataclass
 
 from . import _docopt as docopt
-from .tasktree import Argument, legal_name, task_title, type_and_default
+from .tasktree import (
+    Argument,
+    legal_name,
+    literal_default,
+    task_title,
+    type_and_default,
+)
 
 # Options that describe the wrapped tool's own interface rather than its inputs.
 # A WDL task expresses these through meta{} instead, so they are not task inputs.
@@ -111,12 +117,13 @@ def transform(usage, positionals, options):
     cli_prefix = " ".join(_command_words(usage))
     title = task_title(cli_prefix)
 
+    # A usage line states neither a type nor a default for a positional, so the
+    # shared rule decides from that alone, as it does for the argparse reader.
+    positional_type, _ = type_and_default(is_positional=True)
     cli_args = [
         Argument(
             name=_identifier(pos.spellings[0]),
-            # Every positional is typed File; see the type-inference issue for why
-            # this is wrong for arguments such as samtools' `region`.
-            wdl_type="File",
+            value_type=positional_type,
             is_array=pos.is_array,
             is_required=pos.is_required,
             doc=(
@@ -142,21 +149,25 @@ def transform(usage, positionals, options):
         else:
             name = _identifier(option_flag)
         # The options block carries no requiredness, and the synopsis's brackets are
-        # read only for positionals, so no option's input is required.
-        arg = Argument(
-            name=name,
-            wdl_type="String",
-            option_flag=option_flag,
-            option_has_value=(opt.argcount == 1),
+        # read only for positionals, so no option's input is required.  A default
+        # makes the input non-optional; `Argument.is_optional` says so, and the
+        # writer declares it without `?`.
+        if opt.argcount == 0:
+            # `Option.value` is False for a valueless flag, which is what such a
+            # flag means: absent, the tool never sees it.
+            value_type, default = type_and_default(declared=bool, default=opt.value)
+        else:
+            # It is the text of the `[default: ...]` literal, or None for none.
+            value_type, default = type_and_default(default=literal_default(opt.value))
+        cli_args.append(
+            Argument(
+                name=name,
+                value_type=value_type,
+                default_value=default,
+                option_flag=option_flag,
+                option_has_value=(opt.argcount == 1),
+            )
         )
-        if opt.value is not None and opt.argcount == 1:
-            wdl_type, default = type_and_default(opt.value)
-            if default is not None:
-                # A default makes the input non-optional; `Argument.is_optional`
-                # says so, and the writer declares it without `?`.
-                arg.default_value = default
-                arg.wdl_type = wdl_type
-        cli_args.append(arg)
 
     return dict(
         title=title,

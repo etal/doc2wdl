@@ -54,10 +54,10 @@ doc2wrapper/
                  sharing `-t/--target {wdl,nextflow}` and `-o`
   docopter.py    READER: help text -> object model, via the vendored parser
   argparser.py   READER: live ArgumentParser -> object model, via argparse internals
-  tasktree.py    MODEL: the `Argument` dataclass, plus the naming and typing helpers
-                 the readers and writers share
-  wdlgen.py      WRITER: object model -> WDL; owns RESERVED_WDL_NAMES, TEMPLATE_WDL_NAMES
-                 and the spelling of Python values as WDL literals
+  tasktree.py    MODEL: the `Argument` dataclass and the `ValueType` vocabulary, plus
+                 the naming and typing helpers the readers and writers share
+  wdlgen.py      WRITER: object model -> WDL; owns RESERVED_WDL_NAMES, TEMPLATE_WDL_NAMES,
+                 the WDL spelling of each `ValueType` and of Python values as literals
   nfgen.py       WRITER: object model -> Nextflow; owns RESERVED_NF_NAMES and
                  RESERVED_NF_TITLES
   render.py      Jinja2 environment shared by the writers; `render_document` renders
@@ -81,8 +81,8 @@ The argument list also carries names the block template declares itself, which a
 Second, uniqueness is decided in the writer too, over the final names, because the keyword rename can itself create a duplicate, as `scatter` becomes `scatter_` beside an argument already named that.
 The first argument or task wanting a name keeps it, and later ones take `_2`, `_3` and so on; titles are unique per document, arguments per task.
 Character legality, by contrast, is the readers' business and one rule, `tasktree.legal_name`, since a name legal in WDL is legal in Groovy; both readers build titles with `tasktree.task_title`.
-Third, `type_and_default` lives in `tasktree` rather than in either writer.
-Fourth, `Argument.default_value` and `Argument.doc` hold Python values and plain text, never target-language syntax; `wdlgen` spells them as WDL literals on copies of the arguments, the same shape `rename_arguments` uses, so the shared Jinja2 environment carries no per-language filter.
+Third, a type is decided in one place, `tasktree.type_and_default`, which both readers call, and the model names it in its own vocabulary, `tasktree.ValueType`, never in a target language's.
+Fourth, `Argument.value_type`, `Argument.default_value` and `Argument.doc` hold a `ValueType`, Python values and plain text, never target-language syntax; `wdlgen` spells them as WDL on copies of the arguments, the same shape `rename_arguments` uses, so the shared Jinja2 environment carries no per-language filter.
 
 Rendering is split in two because a document is not a task.
 Statements that may appear only once per file — WDL's `version`, Nextflow's shebang and its note on unset inputs — belong to the document template, which is the only layer that knows how many blocks are being emitted; keeping them in the block template is how a two-task document came to carry two version statements.
@@ -93,9 +93,8 @@ Spelling a comment is likewise per-target and lives in the block template.
 WDL 1.1 has only `#` line comments (`/* ... */` is a grammar error, not a style preference), and the Nextflow template uses `//` per line rather than a `/* ... */` block, which the first `*/` in captured help text would close early.
 So there is no shared helper to write, and readers pass `usage` through as plain text.
 
-One breach remains, and it is honest to name it: `Argument.wdl_type` puts a WDL type name in the shared model, both readers fill it in, and the Nextflow template never reads it.
-Repairing that means a neutral vocabulary in the model translated per writer — the same shape `rename_arguments` already uses — and it moves both readers and both templates at once, which is why it belongs to the type-inference work rather than to a passing edit.
-It is also why every Nextflow input is a `val`: staging a file needs `path`, and choosing `path` from `wdl_type` would act on a type D9 records as wrong for samtools' `region`.
+Every Nextflow input is a `val`, although the model now marks files.
+Staging a file needs `path`, and a positional with no other evidence is typed `FILE`, so choosing `path` from the type would stage samtools' `region` as a file; it would also change what channel the caller builds, which needs `nextflow run` to measure rather than `lint`.
 
 ## Environment
 
@@ -158,7 +157,7 @@ An earlier revision of this file recorded `cnvlib` as simply "not importable"; t
 ## Current state
 
 The help-text path works end to end for both targets and is covered by tests.
-The argparse path emits WDL and Nextflow with unique names throughout for a parser with subcommands, switches and multi-value arguments; it remains invalid only where an inferred type is wrong, the D9 failure described below.
+The argparse path emits WDL and Nextflow with unique names throughout for a parser with subcommands, switches and multi-value arguments, and the flagship document passes `miniwdl check` whole.
 Everything below was verified by execution on 2026-08-16 unless dated otherwise.
 
 ### What the help-text reader will and will not handle
@@ -192,8 +191,8 @@ fixtures sit inside it, which is why they were never a sample.
 
 **The argparse reader has no such limits** — it reads a live parser object and needs no text parsing at all.
 `cnvlib.commands.AP`, the README's flagship example, unpacks to 35 tasks under one `version 1.1`.
-Measured on 2026-10-23, after D14 and the name collisions were fixed, 34 of the 35 tasks pass `miniwdl check` when each is checked alone.
-The one failure is `target --avg-size`, a `type=int` option whose default is the float `266.6666666666667`, a D9 matter; with that one declaration typed `Float` by hand, the whole document passes.
+Measured on 2026-10-23, after D9, the whole 35-task WDL document passes `miniwdl check`.
+The last failure before D9 was `target --avg-size`, a `type=int` option whose default is the float `266.6666666666667`; that default no longer fits the declared type and is dropped, so the input is `Int? avg_size` and the tool applies its own default when it is unset.
 
 Switches render faithfully with three deliberate gaps.
 `count`, `store_const` and `append_const` become a Boolean "pass this flag" input, so `-vvv` cannot be expressed; WDL 1.1 has no string repetition, and the expression that emulates it is unreadable in output meant for editing.
@@ -224,13 +223,12 @@ On `cnvlib.commands.AP`, the 35-process Nextflow document passes `nextflow lint`
 
 ### Open defects
 
-**D9 — type inference is thin and inconsistent.** Concrete evidence in the current output:
-samtools' `region` is a genomic interval, but every positional is typed `File`, so it
-renders as `Array[File]` and a WDL engine will try to localize `chr1:100-200` as a path.
-The angle-bracket convention is not a usable signal either — cnvkit's `targets` is a bare
-word and genuinely is a file. Options with `argcount == 0` are likewise typed `String`
-when they are plainly `Boolean`. Inference should live in one place keyed on the model.
-The WDL template keeps a `defined()` arm for exactly those `String?` switches; once the docopt reader types them Boolean, that arm is dead and should go, which will deliberately change the samtools fixture's output.
+**Positional typing is a measured default, not an inference.** A positional with no declared type and no default is `FILE`, in both readers.
+Over 83 positionals from `cnvlib.commands.AP`, the two fixtures, 16 samtools subcommands and the type-less positionals of Python's standard-library command-line tools, `FILE` is the right type for 78 and `TEXT` for the other 5; no cnvkit positional declares a type.
+The five misses are `region`, `reg`, `prefix`, `sql` and `arguments`, the first three from samtools and the last two from `sqlite3` and `trace`, so samtools' `region` still renders as `Array[File]` and an engine will try to localize `chr1:100-200`.
+No name-based rule was adopted: a filename-word list scored 65 of 83, splits one tool's own positionals between `File` and `String`, and is open-ended, while a list of string names such as `region` must leave out cnvkit's `interval`, which is a BED file.
+The angle-bracket convention is no signal either, since cnvkit's `targets` and samtools' `region` are both bare words.
+An option value placeholder such as `-t FILE` would be real evidence, but `Option.parse` discards it, and reading it is D10-shaped work in the vendored parser.
 
 **D10 — `parameter_meta` is mostly empty from the help-text reader.** `Option.parse` in
 the vendored parser already splits the description off the option line and then discards
@@ -305,6 +303,21 @@ Both bundled help-text fixtures generate byte-identical WDL and Nextflow, verifi
 `requires-python` is `>=3.10`: 3.9 reached end of life in October 2025, and 3.10 is the version `[tool.mypy]` checks against.
 `project.urls` point at `etal/doc2wdl`.
 The bare `setup()` shim in `setup.py` is gone, since PEP 517 builds and editable installs do not need it, and `requirements-dev.txt` lists only tools the repository configures or runs.
+
+**D9 and the Float placeholder**, fixed together because the second is a choice of how WDL spells a type the first decides.
+The readers typed one interface differently: a positional was `File` from help text and `String` from a parser, a help-text switch was `String?` tested with `defined()`, and the argparse reader kept its own copy of the type precedence, in which `type=float, default=10` became `Int`.
+`tasktree.type_and_default` is now the one rule: a valueless flag is `BOOLEAN`, then a declared type decides, then the type of a stated default, and otherwise a positional is `FILE` and an option `TEXT`.
+A declared number reads its own text default as a Python literal, much as argparse calls `type` on a string default and nothing else; a default the type cannot hold is dropped, and a `FILE` takes no path as a default.
+`tasktree.literal_default` reads help text's `[default: ...]` notation, which is the help-text reader's business: a parser's string default is a value, and `default="."` must not be parsed.
+`Argument.wdl_type` is now `Argument.value_type`, a `tasktree.ValueType`, which `wdlgen` translates on copies; the Nextflow template still does not read it.
+Help-text switches take `Option.value`, already `False`, so they render as argparse's `store_true` does, and the template's `defined()` arm for a non-Boolean switch is gone.
+"Equivalent" in the acceptance test means equivalent information: help text shows no `type=`, so a parser's `type=int` option with no default is `INTEGER` from the parser and `TEXT` from its help text.
+The help-text reader also reads no `[default: ...]` for a positional, since argparse prints one only in the "positional arguments" block, so `nargs="?", default="."` is `TEXT` with its default from the parser and `FILE` without one from its help text.
+WDL prints a `Float` placeholder "in the style `[-]ddd.dddddd`, with 6 digits after the decimal point", a rule of the 1.1 specification and unchanged in 1.2, so `1e-10` reached the tool as `0.000000`, and no WDL 1.1 function formats a number otherwise.
+`wdlgen` therefore declares a `NUMBER` as `String`, its default the quoted shortest round-trip text, so the caller's text reaches the command line exactly; an inputs file must then give the value as a string, since a JSON number for a `String` input is rejected.
+Both fixtures' Nextflow and the cnvkit fixture's WDL are byte-identical, verified by checksum, as is the flagship's Nextflow.
+The samtools WDL changes only in its 16 switches, each now `Boolean x = false` rendered with `if x then`.
+The flagship's WDL changes in 76 declarations and the `--avg-size` command line: 41 positionals from `String` to `File`, 33 `Float` inputs and `--drop-outliers`, a `type=float` option with default `10`, to `String`, and `Int avg_size = 266.6666666666667` to `Int? avg_size`, whose flag is now passed only when set; the whole document then passes `miniwdl check`.
 
 ### Working on the vendored parser
 

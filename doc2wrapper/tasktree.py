@@ -3,24 +3,56 @@
 import re
 from ast import literal_eval
 from dataclasses import dataclass, replace
+from enum import Enum
+from pathlib import Path
 from typing import Any
+
+
+class ValueType(Enum):
+    """What kind of value an argument takes, in the model's own vocabulary.
+
+    Neutral on purpose: how a target language spells a type is its writer's
+    business, as the spelling of a default and of a comment already are.  WDL's
+    `File` and Nextflow's `path` are one idea under two names, and WDL declares a
+    NUMBER as `String` because its placeholder coercion would print `1e-10` as
+    `0.000000`.
+    """
+
+    BOOLEAN = "boolean"
+    INTEGER = "integer"
+    NUMBER = "number"
+    TEXT = "text"
+    FILE = "file"
+
+
+#: The types an interface can declare, as the Python callable a parser converts
+#: with.  `argparse.FileType` opens the path it is given, so a reader passes
+#: `Path` for it: the model has one name for a file however the parser spells it.
+_DECLARED_TYPES = {
+    bool: ValueType.BOOLEAN,
+    int: ValueType.INTEGER,
+    float: ValueType.NUMBER,
+    str: ValueType.TEXT,
+    Path: ValueType.FILE,
+}
 
 
 @dataclass
 class Argument:
     """One argument of the wrapped command, as every reader and writer sees it.
 
-    `wdl_type` is misnamed: it holds a type name in WDL's vocabulary that the
-    Nextflow writer does not read at all. Renaming it is part of the outstanding
-    type-inference work, which has to move both readers and both templates at once.
+    `value_type` is a `ValueType`, in the model's own vocabulary, which a writer
+    replaces with its target language's spelling on copies -- the same shape
+    `default_value` and `doc` take, and the reason the Nextflow writer need not read
+    a WDL type name it has no use for.
 
     `default_value` is a Python value, never text in a target language: a writer
     that declares defaults spells it, and drops it where its language has no
     literal for it.
 
     `option_has_value` is read only for options, and says whether the flag is
-    followed by a value.  One that is not is a switch, typed Boolean by a reader
-    that knows it is one.  `option_flag` is then the spelling emitted when the
+    followed by a value.  One that is not is a switch, which `type_and_default`
+    types BOOLEAN.  `option_flag` is then the spelling emitted when the
     input is true and `false_flag` the one emitted when it is false; either may be
     empty, as for `store_false`, which has only a spelling for false.  A switch
     that has a name for both states renders one of them whenever its input is set.
@@ -33,7 +65,7 @@ class Argument:
     """
 
     name: str
-    wdl_type: str
+    value_type: ValueType | str
     is_array: bool = False
     is_required: bool = False
     default_value: Any = None
@@ -67,32 +99,119 @@ class Argument:
         return not self.is_required and self.default_value is None
 
 
-def type_and_default(value):
-    """Infer a help-text default's data type and Python value.
+def type_and_default(declared=None, default=None, is_array=False, is_positional=False):
+    """Infer one argument's value type and the Python value of its default.
 
-    The value is returned as Python, not as WDL: spelling it is the business of a
-    writer that declares defaults.  A default the command computes at run time has
-    no value to give.
+    The one place either reader decides a type, so that the same interface typed
+    from help text and from a live parser agrees.  Precedence: a valueless flag is
+    BOOLEAN, then a declared type, then the type of a stated default, then FILE for
+    a positional and TEXT for anything else -- a positional is the input file far
+    more often than not, while an option is a setting, and neither reader has any
+    further evidence (`<brackets>` do not mark a file: samtools' `region` and
+    cnvkit's `targets` are both bare words and only one is a path).
+
+    A stated default arrives as a Python value -- `literal_default` reads help
+    text's notation, and a parser's own default is already one -- and is dropped
+    unless it fits the type.  Dropping is what makes
+    `type=int, default=266.6666666666667` representable: no WDL declaration can
+    hold that pair, the tool applies the float itself when the flag is absent, and
+    an input left unset passes no flag.
+
+    Args:
+        declared: the type the interface states, as the Python callable a parser
+            would convert with, or None where it states none.  A valueless flag
+            states `bool`.
+        default: the default the interface states, as a Python value, or None for
+            none stated.  A parser may give text for a declared `int` or `float`,
+            which is read as a Python literal, as argparse's `type` reads an
+            ordinary numeral.
+        is_array: whether the argument takes several values.
+        is_positional: whether it is written bare, with no flag.
+
+    Return:
+        (value_type, default_value), the default as Python and never as text of a
+        target language.
     """
+    value_type = _DECLARED_TYPES.get(declared)
+    if isinstance(default, str) and value_type in (ValueType.INTEGER, ValueType.NUMBER):
+        # A declared number reads its own text default, as argparse calls `type`
+        # on a string default and nothing else.  A valueless flag is left alone:
+        # argparse calls no converter for it.
+        default = literal_default(default)
+    if value_type is None:
+        value_type = _value_type_of(default, is_array)
+    if value_type is None:
+        value_type = ValueType.FILE if is_positional else ValueType.TEXT
+    return value_type, default if _fits(value_type, default, is_array) else None
+
+
+def literal_default(text):
+    """The Python value a help text's `[default: ...]` literal states.
+
+    None where it states none, and None where what it states is prose rather than
+    a value: `1/16 avg size, calculated` describes a default the command computes,
+    so there is nothing to declare.  The help-text reader calls this for its
+    notation, and `type_and_default` for the text default of a declared number.
+    No other string default is read: a parser's is not notation but the value
+    itself, as argparse hands the program `.` for `default="."`, parsing nothing.
+    """
+    if text is None:
+        return None
     try:
-        value = literal_eval(value)
+        return literal_eval(text)
     except SyntaxError:
-        # The default is probably calculated by the command
-        # -> no default value to apply here; treat the argument as optional instead
-        return "String", None
+        return None
     except ValueError:
-        # Default is a valid token, but not a number or other literal -> string'll do
-        return "String", value
-    wdl_type = (
-        "Boolean"
-        if isinstance(value, bool)
-        else "Int"
-        if isinstance(value, int)
-        else "Float"
-        if isinstance(value, float)
-        else "String"
-    )
-    return wdl_type, value
+        # A valid token that is not a literal, such as `tab`, is a string default.
+        return text
+
+
+def _value_type_of(value, is_array):
+    """The value type a stated default is evidence of, or None for no evidence.
+
+    An array's elements type the array, and only when they agree; a list default
+    on a scalar argument says nothing about the scalar, so it types nothing.
+    """
+    if is_array and isinstance(value, (list, tuple)):
+        element_types = {_value_type_of(item, False) for item in value}
+        return element_types.pop() if len(element_types) == 1 else None
+    # bool before int, since bool is a subclass of int.
+    if isinstance(value, bool):
+        return ValueType.BOOLEAN
+    if isinstance(value, int):
+        return ValueType.INTEGER
+    if isinstance(value, float):
+        return ValueType.NUMBER
+    if isinstance(value, str):
+        return ValueType.TEXT
+    return None
+
+
+#: The value types a declaration of each type can hold.  A NUMBER holds an
+#: integer as well.  A FILE holds no path as a default, since a path the
+#: interface names, such as `-` for standard input, is not a file the engine can
+#: provide.
+_ACCEPTS = {
+    ValueType.BOOLEAN: {ValueType.BOOLEAN},
+    ValueType.INTEGER: {ValueType.INTEGER},
+    ValueType.NUMBER: {ValueType.INTEGER, ValueType.NUMBER},
+    ValueType.TEXT: {ValueType.TEXT},
+    ValueType.FILE: set(),
+}
+
+
+def _fits(value_type, value, is_array):
+    """Can a declaration of this type hold this default?
+
+    A default that does not fit is dropped rather than coerced or widened: the
+    declaration states what the tool accepts, and the tool keeps applying its own
+    default to an option nobody passes.
+    """
+    if value is None:
+        return True
+    if is_array and isinstance(value, (list, tuple)):
+        return all(_fits(value_type, item, False) for item in value)
+    return _value_type_of(value, False) in _ACCEPTS[value_type]
 
 
 def legal_name(name, prefix):

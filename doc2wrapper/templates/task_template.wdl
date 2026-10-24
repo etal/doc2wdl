@@ -7,12 +7,12 @@ task {{ title }} {
     {% for arg in cli_args %}
       {% if arg.is_array %}
         {% if arg.is_required %}
-    Array[{{ arg.wdl_type }}]+ {{ arg.name }}
+    Array[{{ arg.value_type }}]+ {{ arg.name }}
         {% else %}
-    Array[{{ arg.wdl_type }}] {{ arg.name }} = {{ arg.default_value if arg.default_value is not none else '[]' }}
+    Array[{{ arg.value_type }}] {{ arg.name }} = {{ arg.default_value if arg.default_value is not none else '[]' }}
         {% endif %}
       {% else %}
-    {{ arg.wdl_type }}{{ '?' if arg.is_optional else '' }} {{ arg.name }}{% if arg.default_value is not none %} = {{ arg.default_value }}{% endif +%}
+    {{ arg.value_type }}{{ '?' if arg.is_optional else '' }} {{ arg.name }}{% if arg.default_value is not none %} = {{ arg.default_value }}{% endif +%}
       {% endif %}
     {% endfor %}
   }
@@ -45,14 +45,12 @@ task {{ title }} {
         {% else %}
     ~{"{{ arg.option_flag }} " + {{ arg.name }}} \
         {% endif %}
-      {% elif arg.wdl_type == "Boolean" %}
+      {% else %}
         {% if arg.is_optional %}
     ~{if defined({{ arg.name }}) then (if select_first([{{ arg.name }}]) then "{{ arg.option_flag }}" else "{{ arg.false_flag }}") else ""} \
         {% else %}
     ~{if {{ arg.name }} then "{{ arg.option_flag }}" else "{{ arg.false_flag }}"} \
         {% endif %}
-      {% else %}
-    ~{if defined({{ arg.name }}) then "{{ arg.option_flag }}" else ""} \
       {% endif %}
     {% endfor %}
 

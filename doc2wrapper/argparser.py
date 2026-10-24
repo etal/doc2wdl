@@ -3,8 +3,9 @@
 
 import argparse
 from dataclasses import replace
+from pathlib import Path
 
-from .tasktree import Argument, legal_name, task_title
+from .tasktree import Argument, legal_name, task_title, type_and_default
 
 
 def unpack_tasks(arg_parser, prog):
@@ -165,9 +166,10 @@ def _argument(action, name):
     default = None if action.default is argparse.SUPPRESS else action.default
     if action.nargs == 0:
         option_flag, false_flag, default = _switch(action, default)
+        value_type, default = type_and_default(declared=bool, default=default)
         return Argument(
             name=name,
-            wdl_type="Boolean",
+            value_type=value_type,
             is_required=action.required,
             default_value=default,
             option_flag=option_flag,
@@ -189,24 +191,25 @@ def _argument(action, name):
         if is_option
         else action.nargs not in ("?", "*", argparse.REMAINDER, argparse.SUPPRESS)
     )
+    # Arity decides, not the type of `dest`: `nargs=1` takes one value into a
+    # one-item list and is modeled as the scalar it is on the command line.
+    is_array = (
+        appends
+        or action.nargs in ("*", "+", argparse.REMAINDER)
+        or (isinstance(action.nargs, int) and action.nargs > 1)
+    )
+    # `FileType` opens the path it is given, so it declares a file exactly as
+    # `pathlib.Path` does, and the model has one name for both.
+    value_type, default = type_and_default(
+        declared=Path if isinstance(action.type, argparse.FileType) else action.type,
+        default=default,
+        is_array=is_array,
+        is_positional=not is_option,
+    )
     return Argument(
         name=name,
-        wdl_type=(
-            "Boolean"
-            if action.type is bool or isinstance(default, bool)
-            else "Int"
-            if action.type is int or isinstance(default, int)
-            else "Float"
-            if action.type is float or isinstance(default, float)
-            else "String"
-        ),
-        # Arity decides, not the type of `dest`: `nargs=1` takes one value into a
-        # one-item list and is modeled as the scalar it is on the command line.
-        is_array=(
-            appends
-            or action.nargs in ("*", "+", argparse.REMAINDER)
-            or (isinstance(action.nargs, int) and action.nargs > 1)
-        ),
+        value_type=value_type,
+        is_array=is_array,
         is_required=is_required,
         default_value=default,
         option_flag=action.option_strings[-1] if is_option else "",
@@ -220,8 +223,9 @@ def _switch(action, default):
     """The spellings for true and for false, and the default, of a valueless option.
 
     Spellings prefer the last listed, which by argparse convention is the long one.
+    A default that is not a Boolean does not fit the switch and is dropped by
+    `tasktree.type_and_default`, which types every switch.
     """
-    bool_default = default if isinstance(default, bool) else None
     if isinstance(action, argparse.BooleanOptionalAction):
         # The action adds `--no-X` after each `--X`, and nothing for a short `-X`.
         # Matching that rule rather than the prefix keeps an option itself spelled
@@ -229,11 +233,11 @@ def _switch(action, default):
         generated = {"--no-" + s[2:] for s in action.option_strings if s[:2] == "--"}
         negated = [s for s in action.option_strings if s in generated]
         affirmative = [s for s in action.option_strings if s not in generated]
-        return affirmative[-1], negated[-1] if negated else "", bool_default
+        return affirmative[-1], negated[-1] if negated else "", default
     if isinstance(action.const, bool):
         # store_true and store_false: the flag stores its const.
         flag = action.option_strings[-1]
-        return (flag, "", bool_default) if action.const else ("", flag, bool_default)
+        return (flag, "", default) if action.const else ("", flag, default)
     # count, store_const and append_const store something other than a Boolean.
     # The input means "pass the flag", and leaving it out is what the parser does
     # when the option is absent, whatever `default` records.  A count therefore

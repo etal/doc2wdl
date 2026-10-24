@@ -37,20 +37,24 @@ Task names are checked against a separate list per language, so a tool named `fi
 A Nextflow process input cannot be left out, and passing null fails the run, so a generated process expects `''` for an option or switch left unset and `[]` for a list with no values; the flag is then omitted and the tool's own default applies.
 Every input is a `val`, so a file input is passed as a path string rather than staged; change it to `path` by hand where staging is wanted.
 
+Both readers type arguments by one rule: a flag that takes no value is a `Boolean`, then a declared `type` decides, then the type of a stated default, and otherwise a positional argument is a `File` and an option a `String`.
+A default the type cannot hold is dropped, and the tool's own default then applies.
+A WDL task declares a floating-point number as a `String`, because WDL prints a `Float` with exactly six decimal places, so `1e-10` would reach the tool as `0.000000`; supply such a value as text, as in `"1e-10"`, in an inputs file.
+
 
 Conceptual flow
 ---------------
 
 - Readers (docopt, argparse) parse the given doc, transform contents, and populate the
   object model in memory.
-- Writers (WDL, Nextflow) take the populated object model and render it through the static jinja2 templates; the WDL writer also spells the model's Python values as WDL literals.
+- Writers (WDL, Nextflow) take the populated object model and render it through the static jinja2 templates; the WDL writer also spells the model's value types as WDL types and its Python values as WDL literals.
 
 
 Known issues
 ------------
 
-- Type inference is thin.
-  Every positional argument read from help text is typed `File`, which is wrong for a positional that is not a path — samtools' `region` is a genomic interval, not a file — and an option that takes no value is typed `String` rather than `Boolean` there.
+- A positional argument with no other evidence of its type is a `File`, which is right for most bioinformatics tools and wrong for one that is not a path, such as samtools' `region`, a genomic interval; change it to `String` by hand.
+  Help text shows no type for an option, so an option that takes a value is typed from help text only by its `[default: ...]` literal, and is otherwise a `String`.
 - Option help text does not reach `parameter_meta` when reading help text; the argparse
   reader does carry it through.
 - A `count` option such as `-v` becomes a Boolean, so the generated task can pass it at most once.
@@ -68,4 +72,4 @@ task rather than a complete one.
 
 None of that applies to the `argparse` subcommand, which introspects the parser object directly and parses no text.
 It is the better route for a Python tool: it emits one document for a parser with subcommands.
-Its inferred types still follow each argument's declared `type`, so an `int` option whose default is a float produces a declaration WDL rejects; check the output before trusting it.
+A default that does not fit its argument's declared `type`, such as a float default of an `int` option, is dropped rather than declared, so the generated task leaves that option unset.

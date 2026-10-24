@@ -4,6 +4,7 @@ import math
 from dataclasses import replace
 
 from .render import render_document
+from .tasktree import ValueType
 
 # The WDL 1.1 specification's Reserved Keywords, including the three it says to treat
 # as reserved for a future version.  WDL is case-sensitive, so `Object` and `object`
@@ -24,6 +25,24 @@ Directory hints requirements
 TEMPLATE_WDL_NAMES = ["output_file"]
 
 _ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+# How WDL spells each of the model's value types.  Two map onto `String`: WDL's
+# placeholder coercion prints a Float "in the style [-]ddd.dddddd, with 6 digits
+# after the decimal point" (specification, Expression Placeholder Coercion), so a
+# `Float` input of 1e-10 reaches the command line as `0.000000` and 1e+16 gains six
+# zeros.  WDL 1.1 has no formatting function to undo that -- every Float-to-String
+# path, `sub`, `sep` and concatenation alike, sees the coerced text -- so a number
+# is declared as the text the caller wrote, which passes through exactly.  The cost
+# is that a caller supplies it as text: an inputs file giving a JSON number for a
+# String is rejected, and a Float passed from a workflow, where an engine accepts it
+# at all, arrives with six decimals.
+_WDL_TYPES = {
+    ValueType.BOOLEAN: "Boolean",
+    ValueType.INTEGER: "Int",
+    ValueType.NUMBER: "String",
+    ValueType.TEXT: "String",
+    ValueType.FILE: "File",
+}
 
 
 def render(tasks):
@@ -46,7 +65,7 @@ def render(tasks):
 
 
 def _spelled(task):
-    """Replace each argument's Python default and doc text with their WDL spelling.
+    """Replace each argument's model type, Python default and doc text with WDL's.
 
     The arguments are copied, as `tasktree.rename_arguments` copies them, because a
     second writer may render the same model afterwards.
@@ -54,7 +73,12 @@ def _spelled(task):
     return {
         **task,
         "cli_args": [
-            replace(arg, default_value=_default(arg), doc=_wdl_string(arg.doc))
+            replace(
+                arg,
+                value_type=_WDL_TYPES[arg.value_type],
+                default_value=_default(arg),
+                doc=_wdl_string(arg.doc),
+            )
             for arg in task["cli_args"]
         ],
     }
@@ -63,36 +87,37 @@ def _spelled(task):
 def _default(arg):
     """The WDL literal for an argument's default, or None if it should have none.
 
-    A default must match the declaration's shape: a scalar default of an array
-    input is its sole element, and a list default of a scalar input is dropped.
+    A scalar default of an array input is its sole element; a default that does
+    not fit the declaration at all is already dropped by `tasktree.type_and_default`.
     """
     value = arg.default_value
     if arg.is_array and value is not None and not isinstance(value, (list, tuple)):
         value = [value]
-    elif not arg.is_array and isinstance(value, (list, tuple)):
-        return None
-    return _wdl_literal(value)
+    return _wdl_literal(value, arg.value_type)
 
 
-def _wdl_literal(value):
+def _wdl_literal(value, value_type):
     """Spell a Python value as a WDL literal, or return None if WDL has none for it.
 
-    None is also what an object such as `sys.stdin` or an infinite float yields, so
-    a caller treats it as "no default": the input is then optional instead.
+    None is also what a non-finite float yields, so a caller treats it as "no
+    default": the input is then optional instead.  A NUMBER is declared as a
+    String, so its default is quoted text; `str` of a float is the shortest string
+    that reads back as the same float, which is what keeps 1e-10 out of the
+    six-decimal form.
     """
     if value is None:
         return None
     # bool before int, since bool is a subclass of int.
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        return str(value) if math.isfinite(value) else None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, (int, float)):
+        return _wdl_string(str(value)) if value_type is ValueType.NUMBER else str(value)
     if isinstance(value, str):
         return _wdl_string(value)
     if isinstance(value, (list, tuple)):
-        items = [_wdl_literal(item) for item in value]
+        items = [_wdl_literal(item, value_type) for item in value]
         if any(item is None for item in items):
             return None
         return "[" + ", ".join(items) + "]"

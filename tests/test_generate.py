@@ -6,7 +6,7 @@ import sys
 import pytest
 
 from doc2wrapper import argparser, docopter, nfgen, wdlgen
-from doc2wrapper.tasktree import Argument
+from doc2wrapper.tasktree import Argument, ValueType
 
 EXAMPLES = ["cnvkit-antitarget", "samtools-view"]
 
@@ -139,7 +139,7 @@ def one_argument_task(name, usage="demo"):
         title="Demo",
         usage=usage,
         cli_prefix="demo",
-        cli_args=[Argument(name=name, wdl_type="String", is_required=True)],
+        cli_args=[Argument(name=name, value_type=ValueType.TEXT, is_required=True)],
         has_output_file=False,
     )
 
@@ -169,7 +169,7 @@ def test_nextflow_renames_in_although_it_lints_as_the_last_input(check_nextflow)
     shows the defect: `val in` then `val other` is a syntax error.
     """
     task = one_argument_task("in")
-    task["cli_args"].append(Argument(name="other", wdl_type="String"))
+    task["cli_args"].append(Argument(name="other", value_type=ValueType.TEXT))
     nextflow = nfgen.render([task])
     assert "val in_\n" in nextflow
     check_nextflow(nextflow)
@@ -219,7 +219,7 @@ def test_names_are_unique_after_the_keyword_rename(check_wdl, check_nextflow):
     itself creates is caught, while Nextflow, which keeps `scatter`, renames nothing.
     """
     task = one_argument_task("scatter")
-    task["cli_args"].append(Argument(name="scatter_", wdl_type="String"))
+    task["cli_args"].append(Argument(name="scatter_", value_type=ValueType.TEXT))
     wdl = wdlgen.render([task])
     assert "String scatter_\n" in wdl and "String? scatter__2\n" in wdl
     check_wdl(wdl)
@@ -497,7 +497,7 @@ def test_multi_value_arguments_are_arrays_spelled_per_action(check_wdl, wdl_comm
     parser.add_argument("--pair", nargs=2, required=True)
     wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
     check_wdl(wdl)
-    assert "Array[String] inputs = []\n" in wdl
+    assert "Array[File] inputs = []\n" in wdl
     assert "Array[String] tag = []\n" in wdl
     assert "Array[String]+ pair\n" in wdl
     assert wdl_command(wdl, pair=["p", "q"]) == "tool --pair p q"
@@ -523,18 +523,16 @@ def test_python_defaults_are_spelled_as_wdl_literals(check_wdl, wdl_command):
     wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
     check_wdl(wdl)
     assert 'String output_dir = "."\n' in wdl
-    assert "Float ratio = 0.5\n" in wdl
+    assert 'String ratio = "0.5"\n' in wdl
     assert 'Array[String] chroms = ["chr1", "chr2"]\n' in wdl
     assert "Array[String] tag = []\n" in wdl
-    # WDL has no literal for a file object, so the input is left optional.
+    # No value type holds a file object, so the input is left optional.
     assert "String? stream\n" in wdl
     # A default must take the declaration's shape; one that cannot is dropped.
     assert "String? dims\n" in wdl
     assert 'Array[String] paths = ["."]\n' in wdl
-    # WDL's own string form of a Float has six decimal places.
-    assert wdl_command(wdl) == (
-        "tool --output-dir . --ratio 0.500000 --chroms chr1 chr2 ."
-    )
+    # A number is declared as text, so the caller's own spelling reaches the tool.
+    assert wdl_command(wdl) == "tool --output-dir . --ratio 0.5 --chroms chr1 chr2 ."
 
 
 def test_help_text_defaults_reach_the_writer_as_python_values(check_wdl):
@@ -551,7 +549,7 @@ Options:
     wdl = wdlgen.render([task])
     check_wdl(wdl)
     assert "Int num = 5\n" in wdl
-    assert "Float ratio = 0.5\n" in wdl
+    assert 'String ratio = "0.5"\n' in wdl
     assert 'String sep = "tab"\n' in wdl
 
 
@@ -597,3 +595,62 @@ def test_generated_nextflow_is_accepted_by_nextflow_lint(
         'path "${output_file_name}", emit: output_file, optional: true\n'
         "    stdout emit: stdout\n"
     ) in nextflow
+
+
+def test_a_number_reaches_the_command_line_exactly(check_wdl, wdl_command):
+    """WDL prints a Float with six decimals, so a number is declared as text.
+
+    `Float tiny = 1e-10` is spelled correctly and interpolates as `0.000000`; the
+    specification mandates that form, and WDL 1.1 has no formatting function to
+    undo it, so the value must not be a Float by the time it is interpolated.
+    """
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("--tiny", type=float, default=1e-10)
+    parser.add_argument("--whole", type=float, default=10)
+    # A six-significant-digit format would preserve every value but this one.
+    parser.add_argument("--pair", type=float, nargs=2, default=[1, 266.6666666666667])
+    wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
+    check_wdl(wdl)
+    assert 'String tiny = "1e-10"\n' in wdl
+    assert 'String whole = "10"\n' in wdl
+    assert 'Array[String] pair = ["1", "266.6666666666667"]\n' in wdl
+    assert wdl_command(wdl) == "tool --tiny 1e-10 --whole 10 --pair 1 266.6666666666667"
+    assert (
+        wdl_command(wdl, tiny="2.5e-07")
+        == "tool --tiny 2.5e-07 --whole 10 --pair 1 266.6666666666667"
+    )
+
+
+def test_a_default_the_declaration_cannot_hold_is_dropped(check_wdl, wdl_command):
+    """`type=int, default=266.6666666666667` is argparse's, and WDL has no such Int.
+
+    argparse applies `type` to a string default and to nothing else, so the tool
+    itself receives the float when the flag is absent.  An input left unset passes
+    no flag and reproduces exactly that, where `Int avg_size = 266.6666666666667`
+    is a document no engine accepts.
+    """
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("--avg-size", type=int, default=266.6666666666667)
+    parser.add_argument("--count", type=int, default="5")
+    wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
+    check_wdl(wdl)
+    assert "Int? avg_size\n" in wdl
+    assert "Int count = 5\n" in wdl
+    assert wdl_command(wdl) == "tool --count 5"
+    assert wdl_command(wdl, avg_size=267) == "tool --avg-size 267 --count 5"
+
+
+def test_a_help_text_switch_is_a_boolean(help_text, check_wdl, wdl_command):
+    """A flag taking no value is a Boolean, not a string the caller fills in.
+
+    `String? bam` with a `defined()` test asked the caller for text to mean yes,
+    and could not express no; the arm that rendered it is gone from the template.
+    """
+    wdl = wdlgen.render(
+        [docopter.transform(*docopter.parse(help_text("samtools-view")))]
+    )
+    check_wdl(wdl)
+    assert "Boolean bam = false\n" in wdl
+    assert "defined(bam)" not in wdl
+    assert "--bam" not in wdl_command(wdl, in_bam="x.bam")
+    assert "--bam" in wdl_command(wdl, in_bam="x.bam", bam=True)
