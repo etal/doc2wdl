@@ -37,14 +37,17 @@ _DECLARED_TYPES = {
 }
 
 
-@dataclass
+@dataclass(frozen=True)
 class Argument:
     """One argument of the wrapped command, as every reader and writer sees it.
 
+    Frozen, because one model may be rendered by several writers in turn: a
+    writer changes copies made with `dataclasses.replace`, never the model.
+
     `value_type` is a `ValueType`, in the model's own vocabulary, which a writer
-    replaces with its target language's spelling on copies -- the same shape
-    `default_value` and `doc` take, and the reason the Nextflow writer need not read
-    a WDL type name it has no use for.
+    replaces with its target language's spelling -- the same shape `default_value`
+    and `doc` take, and the reason the Nextflow writer need not read a WDL type
+    name it has no use for.
 
     `default_value` is a Python value, never text in a target language: a writer
     that declares defaults spells it, and drops it where its language has no
@@ -256,9 +259,7 @@ def rename_arguments(cli_args, reserved):
 
     Reserved words differ per target language, so the renaming belongs to the
     writer rather than the reader: sanitizing at read time would bake one
-    language's keywords into the model every other writer also renders.  The
-    arguments are copied rather than mutated for the same reason -- a second
-    writer may render the same model afterwards.
+    language's keywords into the model every other writer also renders.
     """
     taken = set()
     return [

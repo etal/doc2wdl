@@ -83,6 +83,7 @@ The first argument or task wanting a name keeps it, and later ones take `_2`, `_
 Character legality, by contrast, is the readers' business and one rule, `tasktree.legal_name`, since a name legal in WDL is legal in Groovy; both readers build titles with `tasktree.task_title`.
 Third, a type is decided in one place, `tasktree.type_and_default`, which both readers call, and the model names it in its own vocabulary, `tasktree.ValueType`, never in a target language's.
 Fourth, `Argument.value_type`, `Argument.default_value` and `Argument.doc` hold a `ValueType`, Python values and plain text, never target-language syntax; `wdlgen` spells them as WDL on copies of the arguments, the same shape `rename_arguments` uses, so the shared Jinja2 environment carries no per-language filter.
+`Argument` is a frozen dataclass, so a writer can change only a copy made with `dataclasses.replace`, and assigning to the model raises `FrozenInstanceError`.
 
 Rendering is split in two because a document is not a task.
 Statements that may appear only once per file — WDL's `version`, Nextflow's shebang and its note on unset inputs — belong to the document template, which is the only layer that knows how many blocks are being emitted; keeping them in the block template is how a two-task document came to carry two version statements.

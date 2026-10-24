@@ -65,11 +65,7 @@ def render(tasks):
 
 
 def _spelled(task):
-    """Replace each argument's model type, Python default and doc text with WDL's.
-
-    The arguments are copied, as `tasktree.rename_arguments` copies them, because a
-    second writer may render the same model afterwards.
-    """
+    """Replace each argument's model type, Python default and doc text with WDL's."""
     return {
         **task,
         "cli_args": [
