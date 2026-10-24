@@ -6,6 +6,7 @@ tree and inspected statically.  Nothing here ever matches the text against
 """
 
 import itertools
+import re
 import sys
 from dataclasses import dataclass
 
@@ -28,6 +29,22 @@ _OUTPUT_OPTIONS = ("--output", "-output")
 #: Input name the templates reference from their `output` section.  Both
 #: task_template.wdl and process_template.nf hard-code this identifier.
 OUTPUT_FILE_NAME = "output_file_name"
+
+# Where an options-block entry begins, once its indentation is stripped: the two
+# alternatives of the split in `_docopt.parse_defaults`, copied verbatim, which
+# decides the option set.  Mirroring it is what keeps each description with the
+# option it was written beside.
+_ENTRY = re.compile(r"<\S+?>|-\S+?")
+
+# Where textwrap, with which argparse wraps help, may break a line inside a word,
+# transcribed from `textwrap.TextWrapper.wordsep_re`: after a hyphen that follows
+# two letters, or a letter, a hyphen and a letter, when two letters follow it,
+# optionally separated by a hyphen; and after a dash of two or more hyphens that
+# follows a word or punctuation, when a word follows it.
+_WRAPPED_WORD = re.compile(
+    r"((?:[^\W\d]{2}|[^\W\d]-[^\W\d])-)\n(?=[^\W\d]-?[^\W\d])"
+    r"|([\w!\"'&.,?]-{2,})\n(?=\w)"
+)
 
 
 class UsageNotFound(Exception):
@@ -57,7 +74,9 @@ def parse(doc):
 
     Return:
         A tuple of the usage text (with the leading ``usage:`` marker removed),
-        a list of `Positional`, and a list of docopt ``Option``.
+        a list of `Positional`, and a list of docopt ``Option``, each carrying a
+        ``description``: its text from the options block, or ``""`` where none
+        was written.
 
     Raises:
         UsageNotFound: the help text has no usage section, or has several.  There
@@ -83,8 +102,14 @@ def parse(doc):
     #   value=False # default value; False if argcount=0; or if argcount=1, the
     #               # default value if given in help text, or None if not given
     #               # / there isn't one.
+    #   description # set below, not by docopt; "" where none was written
     options = docopt.parse_defaults(doc)
     positionals = _parse_positionals(printable, usage, options)
+    # This follows `_parse_positionals` because that appends the options named only
+    # in the synopsis, which have no options-block entry and so take empty text.
+    descriptions = _option_descriptions(doc)
+    for option in options:
+        option.description = descriptions.get((option.short, option.long), "")
     return usage, positionals, options
 
 
@@ -166,6 +191,7 @@ def transform(usage, positionals, options):
                 default_value=default,
                 option_flag=option_flag,
                 option_has_value=(opt.argcount == 1),
+                doc=opt.description,
             )
         )
 
@@ -229,6 +255,77 @@ def _parse_positionals(printable, usage, options):
         )
         return []
     return _positionals_of(pattern, set(_command_words(usage)))
+
+
+def _option_descriptions(doc):
+    """Map each documented option's ``(short, long)`` flags to its description.
+
+    The flags parse with `Option.parse` to the identity `parse_defaults` gives the
+    option.  An option documented twice keeps its first description.
+    """
+    descriptions = {}
+    for flags, lines in _option_entries(doc):
+        option = docopt.Option.parse(flags)
+        descriptions.setdefault((option.short, option.long), _joined(lines))
+    return descriptions
+
+
+def _option_entries(doc):
+    """Yield each options-block entry's flags and the lines of its description.
+
+    An entry starts where `parse_defaults` starts one, at a line opening with a
+    flag, never on the document's first line, which that split cannot see.  Its
+    flags end at the first two spaces, upstream's own rule, so where one space
+    separates them nothing on the option line is description.  `parse_defaults`
+    runs each entry to the next one or to the end of the document, so a section
+    heading or an epilog would be read as description; here an entry ends instead
+    at a blank line or at a line indented no deeper than the option's own.
+
+    A wrapped description may begin a line with a flag, so a line opening with a
+    flag or a ``<name>`` ends the entry only when indented less than the
+    description.  An option line with no description on it takes the column of
+    the last description, since a help formatter aligns them, until its own first
+    wrapped line states one; with no column known, such a line is an option, as
+    `parse_defaults` reads it.
+    """
+    flags, lines, entry_indent, column = "", None, 0, None
+    for number, line in enumerate(doc.split("\n")):
+        head = line.lstrip(" ")
+        indent = len(line) - len(head)
+        opens = number > 0 and _ENTRY.match(head) is not None
+        if lines is not None:
+            if (
+                line.strip()
+                and indent > entry_indent
+                and not (opens and (column is None or indent < column))
+            ):
+                if not lines:
+                    column = indent
+                lines.append(line)
+                continue
+            yield flags, lines
+            lines = None
+        if opens and head[0] == "-":
+            flags, _, description = head.partition("  ")
+            lines, entry_indent = [], indent
+            if description.strip():
+                lines.append(description)
+                column = len(line) - len(description.lstrip())
+    if lines is not None:
+        yield flags, lines
+
+
+def _joined(lines):
+    """Join a description's lines into one, with each run of whitespace one space.
+
+    Where argparse's wrapping can have broken a word, as `copy-number` into `copy-`
+    and `number`, the lines are rejoined without a space.  A hyphen it never breaks
+    after, as in `5- to 10-fold`, keeps its space, but a suspended hyphen such as
+    `pre- and post-`, or a word ending in `--`, at a line end reads as a broken
+    word and loses it.
+    """
+    text = "\n".join(" ".join(line.split()) for line in lines)
+    return _WRAPPED_WORD.sub(r"\1\2", text).replace("\n", " ")
 
 
 def _positionals_of(node, command_words, is_required=True, is_array=False):

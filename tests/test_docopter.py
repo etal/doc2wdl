@@ -1,5 +1,7 @@
 """Reading a tool's interface out of its help text."""
 
+import argparse
+
 import pytest
 
 from doc2wrapper import docopter
@@ -179,3 +181,132 @@ def test_a_short_only_help_flag_is_still_skipped():
         *docopter.parse("Usage: tool <in>\n\nOptions:\n  -h   show help\n")
     )
     assert [arg.name for arg in task["cli_args"]] == ["in"]
+
+
+def descriptions(doc):
+    """Each parsed option's ``(short, long)`` flags and description."""
+    _usage, _positionals, options = docopter.parse(doc)
+    return {(opt.short, opt.long): opt.description for opt in options}
+
+
+def test_option_descriptions_reach_the_model(help_text):
+    """Wrapped lines join into one, and a `[Default: ...]` note stays in the text."""
+    task = docopter.transform(*docopter.parse(help_text("cnvkit-antitarget")))
+    docs = {arg.name: arg.doc for arg in task["cli_args"] if arg.option_flag}
+    assert docs == {
+        "access": "Regions of accessible sequence on chromosomes (.bed), "
+        "as output by genome2access.py.",
+        "avg_size": "Average size of antitarget bins (results are approximate). "
+        "[Default: 150000]",
+        "min_size": "Minimum size of antitarget bins (smaller regions are dropped). "
+        "[Default: 1/16 avg size, calculated]",
+        "output_file_name": "Output file name.",
+    }
+
+
+def test_a_description_ends_at_a_section_heading(help_text):
+    """samtools starts `Input options:` on the line after `-P`, with no blank line."""
+    docs = descriptions(help_text("samtools-view"))
+    assert docs[("-P", "--fetch-pairs")] == (
+        "Retrieve complete pairs even when outside of region"
+    )
+
+
+def test_a_description_ends_at_a_blank_line():
+    """An indented paragraph after a blank line is an epilog, not the last option's.
+
+    The blank line here holds spaces, as a help text's sometimes do.
+    """
+    doc = "Usage: tool [-v]\n\nOptions:\n  -v  Be loud.\n      \n    See the manual.\n"
+    assert descriptions(doc) == {("-v", None): "Be loud."}
+
+
+def test_a_wrapped_description_may_begin_a_line_with_a_flag():
+    """Indented as the description is, a flag continues it rather than starting one."""
+    doc = """Usage: tool [options]
+
+Options:
+  --method NAME      Strategy, using the
+                     --normal samples only.
+  -n, --normal FILE  Normal samples.
+"""
+    docs = descriptions(doc)
+    assert docs[(None, "--method")] == "Strategy, using the --normal samples only."
+    assert docs[("-n", "--normal")] == "Normal samples."
+
+
+def test_an_option_line_without_a_description_takes_a_known_column():
+    """argparse moves the description of an option with wide flags to the next line.
+
+    Before any description has stated a column, a wrapped line opening with a flag
+    is read as an option; after one has, it continues the description, whether the
+    column came from this entry's own first wrapped line or from an earlier entry's.
+    """
+    doc = """Usage: tool [options]
+
+Options:
+  --first STR
+           --opened as an option.
+  --second STR
+           Tags to keep, as
+           --exclude does.
+  --third STR
+           -1 runs until convergence.
+"""
+    docs = descriptions(doc)
+    assert docs[(None, "--first")] == ""
+    assert docs[(None, "--second")] == "Tags to keep, as --exclude does."
+    assert docs[(None, "--third")] == "-1 runs until convergence."
+
+
+def test_a_line_end_rejoins_only_where_textwrap_breaks_a_word():
+    """A `--` after punctuation may end a line, as cnvkit's `'--gene'` does.
+
+    textwrap breaks after a hyphen only where two letters follow, so a hyphen
+    before a bracket was followed by a space in the text it wrapped.
+    """
+    doc = """Usage: tool [options]
+
+Options:
+  -c STR  Genes are shown unless '--
+          gene' is already given.
+  -w STR  Use a half-
+          (or quarter-) width bin.
+"""
+    docs = descriptions(doc)
+    assert docs[("-c", None)] == "Genes are shown unless '--gene' is already given."
+    assert docs[("-w", None)] == "Use a half- (or quarter-) width bin."
+
+
+def test_an_option_only_in_the_synopsis_has_no_description():
+    """The usage line can name a flag the options block never documents."""
+    doc = "Usage: tool [--extra] [-g N] <in>\n\nOptions:\n  -g N  Gain.\n"
+    assert descriptions(doc) == {("-g", None): "Gain.", (None, "--extra"): ""}
+
+
+def test_descriptions_match_the_parser_that_printed_them():
+    """Read from the help text, each description is the `help` argparse was given.
+
+    argparse wraps after a hyphen, so `copy-number` reaches a line end at some of
+    these widths and must be rejoined without a space, while ` - ` and `5- to`,
+    where argparse never breaks a word, keep their spaces.  Below about 50 columns
+    argparse also splits words longer than the help column, and it may break before
+    a `--` that follows punctuation, as in `'--gene'`; neither leaves a trace a
+    reader can undo.
+    """
+    helps = {
+        "--segment": "Copy-number segmentation of the log2 ratios - with re-centering "
+        "applied to each sample's copy-ratio profile - before calling.",
+        "--chromosome": "Chromosome or range such as 'chr1:2333000-2444000'; all "
+        "genes in it are shown, in a 5- to 10-fold window around each probe.",
+        "--gene": "Comma-separated gene names.",
+    }
+    for width in range(50, 121, 5):
+        parser = argparse.ArgumentParser(
+            prog="tool",
+            formatter_class=lambda prog: argparse.HelpFormatter(prog, width=width),
+        )
+        for flag, text in helps.items():
+            parser.add_argument(flag, help=text)
+        docs = descriptions(parser.format_help())
+        assert {key[1]: docs[key] for key in docs if key[1] in helps} == helps, width

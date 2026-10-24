@@ -577,6 +577,20 @@ def test_text_survives_as_a_wdl_string_literal(check_wdl, wdl_task):
     assert default.value == AWKWARD_TEXT
 
 
+def test_help_text_descriptions_reach_parameter_meta(help_text, wdl_task):
+    """Each description is rendered as one line; `--keep-tag`'s quotes are escaped."""
+    wdl = wdlgen.render(
+        [docopter.transform(*docopter.parse(help_text("samtools-view")))]
+    )
+    assert (
+        '    fetch_pairs: "Retrieve complete pairs even when outside of region"\n'
+        in wdl
+    )
+    assert wdl_task(wdl).parameter_meta["keep_tag"] == (
+        'Comma-separated read tags to preserve (repeatable) [null]. Equivalent to "-x ^STR"'
+    )
+
+
 @pytest.mark.parametrize("example", EXAMPLES)
 def test_generated_nextflow_is_accepted_by_nextflow_lint(
     help_text, check_nextflow, example

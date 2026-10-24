@@ -55,8 +55,8 @@ Known issues
 
 - A positional argument with no other evidence of its type is a `File`, which is right for most bioinformatics tools and wrong for one that is not a path, such as samtools' `region`, a genomic interval; change it to `String` by hand.
   Help text shows no type for an option, so an option that takes a value is typed from help text only by its `[default: ...]` literal, and is otherwise a `String`.
-- Option help text does not reach `parameter_meta` when reading help text; the argparse
-  reader does carry it through.
+- Help text gives `parameter_meta` an option's description when it follows the flags on the same line after at least two spaces, which is docopt's rule, or when it begins on the lines after the flags; samtools writes `-R, --read-group-file FILE ...are in a read group listed in FILE` with one space, so that description is empty.
+  A description ends at a blank line or at a line indented no deeper than its option, so only its first paragraph is kept, and a positional argument's `parameter_meta` entry lists only its alternative spellings, if it has any.
 - A `count` option such as `-v` becomes a Boolean, so the generated task can pass it at most once.
 
 Reading help text is best-effort by nature, and the limits are measured rather than

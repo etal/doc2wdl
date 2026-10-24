@@ -229,13 +229,13 @@ Over 83 positionals from `cnvlib.commands.AP`, the two fixtures, 16 samtools sub
 The five misses are `region`, `reg`, `prefix`, `sql` and `arguments`, the first three from samtools and the last two from `sqlite3` and `trace`, so samtools' `region` still renders as `Array[File]` and an engine will try to localize `chr1:100-200`.
 No name-based rule was adopted: a filename-word list scored 65 of 83, splits one tool's own positionals between `File` and `String`, and is open-ended, while a list of string names such as `region` must leave out cnvkit's `interval`, which is a BED file.
 The angle-bracket convention is no signal either, since cnvkit's `targets` and samtools' `region` are both bare words.
-An option value placeholder such as `-t FILE` would be real evidence, but `Option.parse` discards it, and reading it is D10-shaped work in the vendored parser.
+An option value placeholder such as `-t FILE` would be real evidence, but `Option.parse` discards it; `docopter._option_entries` now yields the flags side of each options-block entry, which is where reading one would start.
 
-**D10 — `parameter_meta` is mostly empty from the help-text reader.** `Option.parse` in
-the vendored parser already splits the description off the option line and then discards
-it, so retaining it is a small change in a file we now own. The argparse reader populates
-`Argument.doc` from `action.help`, and the docopt reader now fills it for alternative
-positional spellings, so only the option descriptions are missing.
+**Description prose that wraps onto a flag declares an option.** `parse_defaults` starts an option at any line opening with a flag, so a description whose wrapped line begins `--normal` declares a second option.
+Measured on cnvkit's `import-rna` help at `COLUMNS=80`, the stray option takes the surrounding `[Default: polish]`, declares `String normal = "polish"`, and so always passes `--normal polish`, while the real `-n, --normal` becomes `normal_2`.
+Over `cnvlib.commands.AP`, four flags are read twice at `COLUMNS=80`, one at 120 and none at 60, 100 or 200.
+`docopter._option_entries` already tells such a line from an entry by the description column; making it the authority on the option set, rather than `parse_defaults`, changes which options exist, so it needs checksums of its own.
+An options block indented with tabs, as the bedtools subcommands' are, yields no options at all, because the split matches spaces only.
 
 Smaller known wrongness, low priority: help-text notation leaks into flags, so
 samtools' `--region[s]-file FILE` becomes a literal flag `--region[s]-file`.
@@ -319,6 +319,20 @@ WDL prints a `Float` placeholder "in the style `[-]ddd.dddddd`, with 6 digits af
 Both fixtures' Nextflow and the cnvkit fixture's WDL are byte-identical, verified by checksum, as is the flagship's Nextflow.
 The samtools WDL changes only in its 16 switches, each now `Boolean x = false` rendered with `if x then`.
 The flagship's WDL changes in 76 declarations and the `--avg-size` command line: 41 positionals from `String` to `File`, 33 `Float` inputs and `--drop-outliers`, a `type=float` option with default `10`, to `String`, and `Int avg_size = 266.6666666666667` to `Int? avg_size`, whose flag is now passed only when set; the whole document then passes `miniwdl check`.
+
+**D10** — help-text options reached `parameter_meta` as `""`, because `Option.parse` splits each description off its flags and discards it.
+`docopter.parse` now annotates each `Option` with a `description`, read by `_option_entries` and `_option_descriptions` in the reader, and `_docopt.py` is unchanged: the vendored file's own header says a feature belongs in `docopter`, and a stored description would have had to survive the four places `parse_long` and `parse_shorts` copy an option.
+An entry starts where `parse_defaults` starts one, except on a wrapped line described below; the flags are split from the description by upstream's two-space rule and parsed with `Option.parse`, and the description is matched to its option by `(short, long)`.
+Options that the synopsis alone names, which `parse_pattern` appends to the list, take `""`.
+Because `parse_defaults` runs an entry to the next one, samtools' section headings and any epilog were read as description; an entry here ends at a blank line or at a line indented no deeper than its option.
+A line opening with a flag ends it only when indented less than the description, since argparse wraps prose onto a flag; that is the defect still open above, seen from the description side.
+An option line with no description on it, as argparse writes an option whose flags are too wide for the help column, takes the column of the last description until its own first wrapped line states one.
+Wrapped lines are joined with single spaces, except where `textwrap`, with which argparse wraps help, can have broken a word: after a hyphen that follows two letters, or a letter, a hyphen and a letter, and precedes two letters, optionally separated by a hyphen, or after a `--` that follows a word or punctuation, the lines are rejoined without a space.
+A suspended hyphen, as in `pre- and post-`, or a word ending in `--`, that falls at a line end cannot be told from a broken word and loses its space; `[default: ...]` notes stay in the text, as the argparse reader keeps them.
+Against the `help` strings the parsers were given, the descriptions read from `format_help()` of every `cnvlib.commands.AP` subcommand match 307 of 307 at 78 of the 91 even `COLUMNS` values from 40 to 220, among them 60, 80, 100, 120 and 200.
+At `COLUMNS` of 53 or less argparse splits words longer than the help column, and at six other even values it breaks before the `--` in `heatmap`'s `'--gene'`, which leaves `' --gene'`; neither can be undone by a reader.
+Of the 47 option inputs the samtools fixture generates, 45 gain a description; `-R` and `-F` separate flags from description with one space and stay empty.
+Both fixtures' WDL is byte-identical outside `parameter_meta`, verified by checksum, and their Nextflow is byte-identical; the flagship's WDL and Nextflow are untouched.
 
 ### Working on the vendored parser
 
