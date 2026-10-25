@@ -5,6 +5,7 @@ import argparse
 import pytest
 
 from doc2wrapper import docopter
+from doc2wrapper.tasktree import ValueType
 
 # A usage line whose `--tag` is declared as taking a value but written bare.  The
 # option parser then consumes the closing bracket as that value and bracket depth
@@ -807,6 +808,57 @@ def test_a_tab_indented_options_block_is_read():
     assert descriptions(doc)[("-sorted", None)] == (
         'Use the "chromsweep" algorithm (-k1,1 -k2,2n). - Requires sorted input.'
     )
+
+
+def test_a_type_bullet_in_a_description_gives_the_flag_a_value(corpus_text):
+    """bedtools writes no placeholder for `-f`, only `- FLOAT (e.g. 0.50)` below it."""
+    doc = corpus_text("bedtools-intersect")
+    task = docopter.transform(*docopter.parse(doc))
+    args = {arg.name: arg for arg in task["cli_args"]}
+    assert (args["f"].option_has_value, args["f"].value_type) == (
+        True,
+        ValueType.NUMBER,
+    )
+    assert args["f"].default_value is None
+    assert (args["wa"].option_has_value, args["wa"].value_type) == (
+        False,
+        ValueType.BOOLEAN,
+    )
+
+
+@pytest.mark.parametrize(
+    ("bullet", "expected"),
+    [
+        ("- (INTEGER)", ValueType.INTEGER),
+        ("- (Integer) or (Float, e.g. 0.1) if used with -pct.", ValueType.NUMBER),
+        ("- (STRING): can be + or -", ValueType.TEXT),
+        ("- By default, overlaps are reported.", ValueType.BOOLEAN),
+        ("- Integer overflow is trapped.", ValueType.BOOLEAN),
+        ("Traps on integer overflow.", ValueType.BOOLEAN),
+    ],
+)
+def test_only_a_type_bullet_decides_the_value_type(bullet, expected):
+    """A float holds an integer; prose that mentions a type or a default is no bullet."""
+    doc = f"Usage:   tool\n\nOptions:\n\t-b\tExtend each entry.\n\t\t{bullet}\n"
+    [arg] = docopter.transform(*docopter.parse(doc))["cli_args"]
+    assert arg.value_type == expected
+    assert arg.option_has_value == (expected != ValueType.BOOLEAN)
+
+
+def test_a_type_bullet_leaves_the_synopsis_reading_alone(capsys):
+    """bedtools slop writes `[-b <int> or (-l and -r)]`.
+
+    Given a value before the synopsis is read, `-r` would take the `)`.
+    """
+    doc = (
+        "Usage:   tool [OPTIONS] -i <bed> [-b <int> or (-l and -r)]\n\nOptions:\n"
+        "\t-l\tBases to subtract from the start.\n\t\t- (INTEGER)\n"
+        "\t-r\tBases to add to the end.\n\t\t- (INTEGER)\n"
+    )
+    _usage, _prefix, positionals, _options = docopter.parse(doc)
+    assert capsys.readouterr().err == ""
+    assert positionals
+    assert options_of(doc)[:2] == [("-l", None, 0, False), ("-r", None, 0, False)]
 
 
 def test_tabs_advance_to_stops_eight_columns_apart():

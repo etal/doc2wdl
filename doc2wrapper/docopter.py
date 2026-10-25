@@ -69,6 +69,14 @@ _PLAIN_FLAG = re.compile(r"--?(?:[\w@](?:[\w.@+-]*[\w@+-])?|[%,?])")
 _FLAG_ALTERNATIVE = re.compile(r"((?<![^\s,])-\w)\|(?=--\w)")
 _FLAG_REPETITION = re.compile(r"(?<![^\s,])(-[^\s,|]*?[\w\]])\.\.\.(?=[\s,]|$)")
 
+# A line of a description that names the type of the option's value as a bullet,
+# as bedtools writes `- FLOAT (e.g. 0.50)` and `- (INTEGER)` under an option whose
+# flags show no placeholder: the type word in capitals, or in parentheses in any
+# case, so that `- Integer overflow is trapped.` is prose.  `_value_kind` reads it.
+_TYPE_NAMES = "INT|INTEGER|FLOAT|STRING"
+_TYPE_BULLET = re.compile(rf"-\s+(?:\((?i:{_TYPE_NAMES})\)|(?:{_TYPE_NAMES})(?![\w-]))")
+_TYPE_WORD = re.compile(rf"\b({_TYPE_NAMES})\b", re.I)
+
 # The `or:` that opens each further synopsis line in GNU help text.  `formal_usage`
 # splits alternatives at the program name, so this token would otherwise end the
 # previous alternative as a bare word, and so as a positional named `or`.
@@ -141,6 +149,10 @@ def parse(doc):
     #   description # set by `_documented_options`, not by docopt
     #   repeated    # likewise: the placeholder an entry repeats, as in
     #               # `-n NORMAL [NORMAL ...]`, or None
+    #   declared_type
+    #               # likewise: for an option with argcount 0, the type its
+    #               # description states it takes a value of, as `_value_kind`
+    #               # reads it, or None
     options = _documented_options(doc, synopsis)
     documented = len(options)
     cli_prefix, positionals = _read_command_line(printable, usage, options)
@@ -149,6 +161,7 @@ def parse(doc):
     for option in options[documented:]:
         option.description = ""
         option.repeated = None
+        option.declared_type = None
     return usage, cli_prefix, positionals, options
 
 
@@ -278,9 +291,10 @@ def transform(usage, cli_prefix, positionals, options):
             continue
         # A repeated placeholder is argparse's `nargs="+"`: one flag, then the list.
         is_array = opt.repeated is not None
+        takes_value = _takes_value(opt)
         # The templates' output sections name one file, so an output option that
         # takes a list is an ordinary input.
-        if option_flag in _OUTPUT_OPTIONS and opt.argcount == 1 and not is_array:
+        if option_flag in _OUTPUT_OPTIONS and takes_value and not is_array:
             # This variable will also be used in the WDL task's `output` section
             name = OUTPUT_FILE_NAME
             has_output_file = True
@@ -290,10 +304,14 @@ def transform(usage, cli_prefix, positionals, options):
         # read only for positionals, so no option's input is required.  A default
         # makes the input non-optional; `Argument.is_optional` says so, and the
         # writer declares it without `?`.
-        if opt.argcount == 0:
+        if not takes_value:
             # `Option.value` is False for a valueless flag, which is what such a
             # flag means: absent, the tool never sees it.
             value_type, default = type_and_default(declared=bool, default=opt.value)
+        elif opt.declared_type is not None:
+            # Only the description says this flag takes a value, and `Option.parse`
+            # reads a `[default: ...]` only for a flag with a placeholder.
+            value_type, default = type_and_default(declared=opt.declared_type)
         else:
             # It is the text of the `[default: ...]` literal, or None for none.
             value_type, default = type_and_default(
@@ -306,7 +324,7 @@ def transform(usage, cli_prefix, positionals, options):
                 is_array=is_array,
                 default_value=default,
                 option_flag=option_flag,
-                option_has_value=(opt.argcount == 1),
+                option_has_value=takes_value,
                 doc=opt.description,
             )
         )
@@ -321,9 +339,21 @@ def transform(usage, cli_prefix, positionals, options):
     )
 
 
+def _takes_value(option):
+    """Does the flag take a value, by its placeholder or by its description?
+
+    The description's evidence, which `_value_kind` reads, is used here and not in
+    `parse`, where the option's argument count decides how the synopsis is read:
+    there a flag given a value would take the next token of the synopsis as it,
+    which degrades bedtools slop's `[-b <int> or (-l and -r)]`, as `-r` would take
+    the closing parenthesis.
+    """
+    return option.argcount == 1 or option.declared_type is not None
+
+
 def _is_skipped(flag, option):
     """Is this a valueless help or version flag, which no task input passes?"""
-    return flag in _SKIPPED_OPTIONS and option.argcount == 0
+    return flag in _SKIPPED_OPTIONS and not _takes_value(option)
 
 
 def _one_per_flag(options, flags):
@@ -652,8 +682,31 @@ def _documented_options(doc, synopsis):
         option.description = _joined(description)
         repeat = _REPEATED_VALUE.search(flags)
         option.repeated = repeat.group(1) if repeat else None
+        option.declared_type = None if option.argcount else _value_kind(description)
         options.append(option)
     return options
+
+
+def _value_kind(lines):
+    """The type of value a description says its flag takes, or None.
+
+    bedtools writes no placeholder after a flag that takes a value, and names the
+    value's type on a line of the description of its own, as in ``- FLOAT (e.g.
+    0.50)``, ``- (INTEGER)`` or ``- (Integer) or (Float, e.g. 0.1) if used with
+    -pct``; the first such line decides.  The type word is in capitals or in
+    parentheses, as `_TYPE_BULLET` requires.  A line naming an integer and a float
+    is a float, which holds both, and one naming a string is a string.  Prose that
+    merely mentions a type is not read, whether as gcc's "Trap on integer overflow"
+    under a switch or as a bullet such as ``- Integer overflow is trapped.``, nor
+    is a default stated in prose, which bedtools also writes under switches.
+    """
+    for line in lines:
+        if _TYPE_BULLET.match(line.strip()):
+            words = {word.lower() for word in _TYPE_WORD.findall(line)}
+            if "string" in words:
+                return str
+            return float if "float" in words else int
+    return None
 
 
 def _option_entries(doc, synopsis):

@@ -30,7 +30,23 @@ def help_text(example_dir):
     """
 
     def read(name):
-        return (example_dir / f"help-{name}.txt").read_text()
+        return (example_dir / f"help-{name}.txt").read_text(encoding="utf-8")
+
+    return read
+
+
+@pytest.fixture(scope="session")
+def corpus_dir(pytestconfig):
+    """Directory holding the conformance corpus and its manifest."""
+    return pytestconfig.rootpath / "tests" / "corpus"
+
+
+@pytest.fixture(scope="session")
+def corpus_text(corpus_dir):
+    """Read one of the conformance corpus's help texts by the name its manifest uses."""
+
+    def read(name):
+        return (corpus_dir / f"help-{name}.txt").read_text(encoding="utf-8")
 
     return read
 

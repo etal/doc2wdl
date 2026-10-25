@@ -380,7 +380,7 @@ Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24
 The six bedtools records that change, five captured subcommands and the corpus's `bedtools intersect`, go from between 1 and 5 options to between 10 and 29, `bedtools intersect` from 2 to 29, and across the nine records 144 option declarations become 249, of which 227 rather than 79 carry a description and 63 rather than 89 take a value.
 `vim` and `R` separate a flag from its description with a tab, so `vim`'s switches, which read their descriptions as values, become switches again, and `R` recovers `--vanilla`.
 The captured `samtools view` gains two spurious options, from example command lines in its notes that are indented with a tab and fall left of the description column carried from the options block, the gap D17 describes.
-bedtools writes no placeholder for an option's value, so options such as `-f`, a minimum overlap fraction, become switches.
+bedtools writes no placeholder for an option's value, so options such as `-f`, a minimum overlap fraction, became switches; D27 reads the type bullet many of them carry.
 Both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after, and the corpus's `bedtools intersect` passes `miniwdl check` and `nextflow lint`.
 
 **D21** — help-text notation leaked into flags.
@@ -460,6 +460,18 @@ No arity and no text are merged between the declarations of a flag, so a form is
 Two options that GNU documents with a short flag of their own beside a long flag taking a fixed value, `ls`'s `-p, --indicator-style=slash` and `sort`'s `-C, --check=silent`, are left out, since docopt names each by its long flag.
 Over the 196 help texts 12 records change, each only by losing inputs, and no CLI prefix or positional moves; the git-commit synopsis's `--squash <commit>` still declares a positional `commit`, since the synopsis registers `--squash` as a switch before the rewrite.
 Both fixtures and the corpus generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
+
+**D27** — a bedtools option that takes a value was read as a switch.
+`Option.parse` gives a flag a value only where its entry writes a placeholder after it, and bedtools writes none: `-f` is documented as `\t-f\tMinimum overlap required as a fraction of A.`, with `- FLOAT (e.g. 0.50)` on a line of its own below, so the generated task could pass `-f` but never its value.
+Probing each documented option of the 43 bedtools 2.31.1 subcommands that print a `Usage:` marker against the binary, by passing the flag before a sentinel token, found 145 options that take a value, 131 of them read as switches.
+`docopter._value_kind` now reads a description line that opens with a dash and a type word, `INT`, `INTEGER`, `FLOAT` or `STRING`, in capitals, or in parentheses in any case, as the type of the flag's value: an integer, a float where the line also names a float, as slop's `- (Integer) or (Float, e.g. 0.1) if used with -pct.` does, and text where it names a string.
+`_documented_options` records it as `declared_type` for an option with no placeholder, and `transform` gives such an option a value of that type, with no default, since `Option.parse` reads a `[default: ...]` only for a flag with a placeholder; WDL declares a float as `String`, as it does every `NUMBER`.
+The argument count itself is left at 0, so the synopsis is read as before: given a value before `parse_pattern` runs, slop's, flank's and shift's `[-b <int> or (-l and -r)]` degrade, as `-r` takes the closing parenthesis as its value.
+Over the 43 subcommands 44 options in 22 of them take a value this way, every one a value-taker by the probe.
+Prose that only mentions a type is not read, whether as gcc's "Trap on integer overflow" under a switch or as a bullet such as `- Integer overflow is trapped.`, which is why a type word outside parentheses must be in capitals, nor is a default stated in prose, which bedtools writes under switches as often as under value-takers, `- By default, overlaps are reported without respect to strand` among them.
+The rest of the 131 are still switches: their descriptions name no type, as `-g`'s "Provide a genome file" does, or, for 57 of them, such as `-a` and `-b`, there is no description to read, since only the synopsis names the flag.
+Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24, four records change, `bedtools genomecov`, `bedtools merge` and both captures of `bedtools intersect`, and nothing outside bedtools; no CLI prefix, positional or warning moves.
+Both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after, and the corpus's `bedtools intersect` passes `miniwdl check` and `nextflow lint`.
 
 ### Working on the vendored parser
 
