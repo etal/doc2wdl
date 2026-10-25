@@ -469,9 +469,13 @@ def _option_entries(doc):
     description is the first paragraph: it starts after the first two spaces on the
     option line, upstream's rule, so where one space separates the flags from the
     text nothing on that line is description, and it ends at the first blank line.
+
+    Tabs are expanded first, as `_expanded` describes, since help text such as
+    bedtools' indents its options block with a tab and separates each flag from
+    its description with another.
     """
     entry, lines, describing, entry_indent, column = None, [], False, 0, None
-    for number, line in enumerate(doc.split("\n")):
+    for number, line in enumerate(_expanded(doc).split("\n")):
         head = line.lstrip(" ")
         indent = len(line) - len(head)
         starts = (
@@ -500,6 +504,19 @@ def _option_entries(doc):
                     column = len(line) - len(description)
     if entry is not None:
         yield entry, lines
+
+
+def _expanded(text):
+    """Expand tabs to stops eight columns apart, as a terminal displays them.
+
+    Indentation and the description column are measured in columns, so a tab must
+    count as the columns it occupies on screen.  A tab that follows text and would
+    advance one column advances nine, to the stop after the next, because one
+    space does not separate flags from a description where `Option.parse` and
+    `_option_entries` look for two: bedtools' ``\\t-sorted\\tUse ...`` would
+    otherwise read the description's words as the value of ``-sorted``.
+    """
+    return re.sub(r"(?<=\S)\t", " \t", text).expandtabs(8)
 
 
 def _joined(lines):

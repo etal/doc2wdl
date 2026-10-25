@@ -481,6 +481,52 @@ Options:
     assert docs[(None, "--third")] == "-1 runs until convergence."
 
 
+def test_a_tab_indented_options_block_is_read():
+    """bedtools indents each option with a tab and ends its flags with another.
+
+    `-sorted` ends one column before a tab stop, where a tab expanded as a terminal
+    shows it leaves a single space, and `Option.parse` would then read the words
+    after it as the flag's value, `-k2` among them.
+    """
+    doc = (
+        "Usage:   tool [OPTIONS]\n\nOptions: \n"
+        "\t-wa\tWrite the original entry in A.\n\n"
+        '\t-sorted\tUse the "chromsweep" algorithm (-k1,1 -k2,2n).\n'
+        "\t\t- Requires sorted input.\n\n"
+        "\t-f\tMinimum overlap.\n"
+    )
+    assert options_of(doc) == [
+        ("-wa", None, 0, False),
+        ("-sorted", None, 0, False),
+        ("-f", None, 0, False),
+    ]
+    assert descriptions(doc)[("-sorted", None)] == (
+        'Use the "chromsweep" algorithm (-k1,1 -k2,2n). - Requires sorted input.'
+    )
+
+
+def test_tabs_advance_to_stops_eight_columns_apart():
+    """R continues `--vanilla` on a line of three tabs, at its description column.
+
+    Tabs counted as any fixed width, or with stops closer together, would put that
+    line left of the column, where its leading flag starts an entry of its own.
+    """
+    doc = (
+        "Usage: R [options]\n\nOptions:\n"
+        "  --save                Do save workspace.\n"
+        "  --vanilla\t\tCombine --no-save, --no-restore,\n"
+        "\t\t\t--no-init-file and --no-environ\n"
+        "  -q, --quiet           Don't print startup message\n"
+    )
+    assert descriptions(doc) == {
+        (None, "--save"): "Do save workspace.",
+        (None, "--vanilla"): (
+            "Combine --no-save, --no-restore, --no-init-file and --no-environ"
+        ),
+        ("-q", "--quiet"): "Don't print startup message",
+    }
+
+
 def test_a_line_end_rejoins_only_where_textwrap_breaks_a_word():
     """A `--` after punctuation may end a line, as cnvkit's `'--gene'` does.
 

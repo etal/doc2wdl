@@ -177,7 +177,7 @@ Because the corpus is not a sample, its counts describe the corpus and not how o
   `python3 -m zipfile` fails on a wrapped synopsis line opening with `-c`, which is read as an options entry and declares `-t` a second time.
   In `samtools stats` the options block follows the synopsis with no blank line, so `printable_usage` reads it as usage.
 - **Parsed: 9.** Only `wgsim` and `cnvkit.py batch` yield exactly their positionals.
-  The rest run to completion with extra positionals: summary placeholders such as `[OPTIONS]` and `...` (`tabix`), option values the reader cannot attribute to an option (`ls`, which has no options block, and `bedtools intersect`, whose tab-indented block yields no options), an options block's prose (`htsfile`, swallowed as `samtools stats` is but without desyncing), or a placeholder split at its space (`jq`'s `<jq filter>`).
+  The rest run to completion with extra positionals: summary placeholders such as `[OPTIONS]` and `...` (`tabix`), option values the reader cannot attribute to an option (`ls`, which has no options block, and `bedtools intersect`, whose options block omits the `-a` and `-b` its synopsis names), an options block's prose (`htsfile`, swallowed as `samtools stats` is but without desyncing), or a placeholder split at its space (`jq`'s `<jq filter>`).
   argparse's `X [X ...]` for `nargs="+"` becomes two positionals, one required and one an optional array (`miniwdl check`), and after an option, as in `-n NORMAL [NORMAL ...]`, the repetition becomes a positional (`cnvkit.py import-rna`).
 
 The reliable shape is a single blank-line-terminated synopsis naming at most one fixed subcommand, written directly after the program name, where no flag's arity differs between the options block and the synopsis and no wrapped line of the synopsis begins with a flag.
@@ -229,7 +229,6 @@ An option value placeholder such as `-t FILE` would be real evidence, but `Optio
 **A wrapped synopsis line that opens with a flag declares an option.** An options-block entry may start on any line opening with a flag where no description column is yet known, the usage section included, because hand-written help may place its options block directly under the synopsis with no blank line, where `printable_usage` reads it as usage.
 So in `help-zipfile.txt` the synopsis line opening with `-c` declares `-t` a second time, and docopt rejects `-t` as ambiguous.
 Skipping entries inside the usage paragraph would let `help-zipfile.txt` parse, but it would also turn `help-samtools-stats.txt` from degraded into parsed with 208 positionals read from its options block, so the two cases need a rule that tells a wrapped synopsis line from an options block, which none yet does.
-An options block indented with tabs, as the bedtools subcommands' are, yields no options at all, because an entry starts only after spaces.
 
 **A subcommand after an option group is read as an argument.** The command words are the program name and the literal words written directly after it, so `Usage: prog [-v] sub <x>` wraps `prog` and declares an input `sub`, typed `File` as every positional is, which the generated task cannot pass as the word `sub`.
 The pattern tree cannot tell such a word from a lowercase placeholder: `tr [-Ccsu] string1 string2` and the fixture's `cnvkit.py antitarget [-h] ... targets` have the same shape.
@@ -376,6 +375,20 @@ In 14 of them an input named `or` or a spelling `or:` is gone, among them `git-l
 The fifteenth, `bsd-sed`, warns because its first alternative begins `sed script`, where `script` is a placeholder that the text, now as before, reads as a command word; the `script` in its second alternative's `-e script` is no longer removed, so `script_file` becomes an input of its own.
 In `samtools-index`, three words `index` in that file's options block, which is likewise read as usage, are no longer removed, since they are not the leading words of an alternative.
 Both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
+
+**D20** — an options block indented with tabs yielded no options, because `_option_entries` measured indentation in spaces alone.
+Every bedtools subcommand writes its entries as `\t-wa\tWrite the original entry ...`, so `bedtools intersect` declared only the two flags its synopsis names.
+`_option_entries` now reads the text with its tabs expanded by `docopter._expanded`, to stops eight columns apart as a terminal shows them, so indentation and the description column are counted in the columns a tab occupies on screen.
+A tab after text advances at least two columns: one that would advance one advances nine, to the stop after the next.
+Without that rule, bedtools' `\t-sorted\tUse ... (-k1,1 -k2,2n)` leaves one space after `-sorted`, where `Option.parse` looks for two, and the description's words become flags, among them `-k2`; `-header` likewise became an option taking a value.
+The width is measured rather than conventional: with stops four columns apart, or with each tab replaced by two spaces, R's continuation line of three tabs falls left of its description column and declares `--no-init-file` a second time.
+Only the options-block reading sees the expanded text; the usage text the templates comment keeps its tabs.
+Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24, nine records change and no positional, CLI prefix or warning moves.
+The six bedtools records that change, five captured subcommands and the corpus's `bedtools intersect`, go from between 1 and 5 options to between 10 and 29, `bedtools intersect` from 2 to 29, and across the nine records 144 option declarations become 249, of which 227 rather than 79 carry a description and 63 rather than 89 take a value.
+`vim` and `R` separate a flag from its description with a tab, so `vim`'s switches, which read their descriptions as values, become switches again, and `R` recovers `--vanilla`.
+The captured `samtools view` gains two spurious options, from example command lines in its notes that are indented with a tab and fall left of the description column carried from the options block, the gap D17 describes.
+bedtools writes no placeholder for an option's value, so options such as `-f`, a minimum overlap fraction, become switches.
+Both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after, and the corpus's `bedtools intersect` passes `miniwdl check` and `nextflow lint`.
 
 ### Working on the vendored parser
 
