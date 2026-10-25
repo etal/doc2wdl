@@ -90,11 +90,12 @@ def parse(doc):
         doc: the full ``--help`` output of some command-line tool.
 
     Return:
-        A tuple of the usage text (with the leading ``usage:`` marker removed),
-        the CLI prefix, i.e. the program name and the command words after it that
-        name the command the task invokes, a list of `Positional`, and a list of
-        docopt ``Option``, each carrying a ``description``: its text from the
-        options block, or ``""`` where none was written.
+        A tuple of the usage text, which is the synopsis `_synopsis` finds with the
+        leading ``usage:`` marker removed; the CLI prefix, i.e. the program name and
+        the command words after it that name the command the task invokes; a list
+        of `Positional`; and a list of docopt ``Option``, each carrying a
+        ``description``: its text from the options block, or ``""`` where none was
+        written.
 
     Raises:
         UsageNotFound: the help text has no usage section, or has several.  There
@@ -109,10 +110,11 @@ def parse(doc):
     except docopt.DocoptLanguageError as why:
         raise UsageNotFound(str(why)) from why
 
-    marked = printable.split(None, 1)
-    if len(marked) < 2:
+    if len(printable.split(None, 1)) < 2:
         raise UsageNotFound("the usage section is empty.")
-    usage = marked[1]
+    synopsis = _synopsis(doc, printable)
+    printable = "\n".join(printable.split("\n")[: len(synopsis)])
+    usage = printable.split(None, 1)[1]
     # Option attributes:
     #   short=None, # string, e.g. -s
     #   long=None,  # string, e.g. --sample
@@ -123,7 +125,7 @@ def parse(doc):
     #   description # set by `_documented_options`, not by docopt
     #   repeated    # likewise: the placeholder an entry repeats, as in
     #               # `-n NORMAL [NORMAL ...]`, or None
-    options = _documented_options(doc)
+    options = _documented_options(doc, synopsis)
     documented = len(options)
     cli_prefix, positionals = _read_command_line(printable, usage, options)
     # `_read_command_line` appends the options named only in the synopsis, which
@@ -132,6 +134,45 @@ def parse(doc):
         option.description = ""
         option.repeated = None
     return usage, cli_prefix, positionals, options
+
+
+def _synopsis(doc, printable):
+    """The numbers of the lines of `doc` that hold the synopsis.
+
+    `printable` is the usage section, which `printable_usage` reads from the marker
+    to the first blank line, so an options block or prose written directly under
+    the synopsis is part of it.  The synopsis ends at the first later line that is
+    indented less than the program name, where the marker's line names it, since a
+    wrapped synopsis line is aligned under the program name or deeper, as argparse
+    aligns it, while a section heading, an options block or prose is not; a line
+    opening with GNU's ``or:`` continues the synopsis however it is indented.  It
+    also ends at a line opening with a flag whose description follows two spaces
+    later, as `_option_entries` reads an option line, which is the only end a
+    synopsis has where the marker stands alone on its line.  Indentation counts
+    the columns a tab occupies on screen.  The program name's column is measured
+    with `str.expandtabs` rather than `_expanded`, which would move it a stop
+    further where a tab follows text ending one column before a stop.
+    """
+    # `printable_usage` has found exactly one marker, spelled as it spells it.
+    marker = re.search(r"[Uu][Ss][Aa][Gg][Ee]:", doc)
+    start = doc.rfind("\n", 0, marker.start()) + 1
+    first = doc.count("\n", 0, start)
+    line = doc[start:].split("\n", 1)[0]
+    named = line[marker.end() - start :].lstrip()
+    column = len(line[: len(line) - len(named)].expandtabs(8)) if named else None
+    lines = printable.split("\n")
+    for number in range(1 if named else 2, len(lines)):
+        if _CONTINUATION.match(lines[number]):
+            continue
+        expanded = _expanded(lines[number])
+        head = expanded.lstrip(" ")
+        if column is not None and len(expanded) - len(head) < column:
+            break
+        if head[:1] == "-" and _ENTRY.match(head) and head.partition("  ")[2].strip():
+            break
+    else:
+        number = len(lines)
+    return range(first, first + number)
 
 
 def transform(usage, cli_prefix, positionals, options):
@@ -521,7 +562,7 @@ def _placeholder_group(tokens, opening):
     return opening + closing if group[closing : closing + 1] == ["]"] else None
 
 
-def _documented_options(doc):
+def _documented_options(doc, synopsis):
     """Read each options-block entry into a docopt ``Option`` with its description.
 
     `Option.parse` is given the text upstream's `parse_defaults` gave it, the option
@@ -532,7 +573,7 @@ def _documented_options(doc):
     an ``nargs="+"`` option as ``NORMAL [NORMAL ...]``, or None.
     """
     options = []
-    for entry, description in _option_entries(doc):
+    for entry, description in _option_entries(doc, synopsis):
         option = docopt.Option.parse("\n".join(entry))
         option.description = _joined(description)
         repeat = _REPEATED_VALUE.search(entry[0].partition("  ")[0])
@@ -541,11 +582,12 @@ def _documented_options(doc):
     return options
 
 
-def _option_entries(doc):
+def _option_entries(doc, synopsis):
     """Yield each options-block entry's lines and the lines of its description.
 
     An entry starts at a line opening with a flag, never on the document's first
-    line, and its first line is the option line from that flag on.  Upstream's
+    line nor on a line of the synopsis, whose line numbers `synopsis` holds, and its
+    first line is the option line from that flag on.  Upstream's
     `parse_defaults` started an option at every such line, so a description whose
     wrapped line begins with a flag declared an option of its own and could take
     the enclosing option's ``[default: ...]``.  Here a line opening with a flag
@@ -577,6 +619,7 @@ def _option_entries(doc):
         indent = len(line) - len(head)
         starts = (
             number > 0
+            and number not in synopsis
             and _ENTRY.match(head) is not None
             and (column is None or indent < column)
         )

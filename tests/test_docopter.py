@@ -203,11 +203,81 @@ def test_gnu_continuation_marker_is_not_an_argument(capsys):
     assert capsys.readouterr().err == ""
 
 
+def test_a_line_indented_less_than_the_program_name_ends_the_synopsis():
+    """samtools and htsfile write their options block directly under the synopsis.
+
+    The usage text the templates comment ends with the synopsis too.
+    """
+    doc = "Usage: prog [-a] FILE\nOptions:\n  -a, --all\n      Everything.\n"
+    usage, _prefix, positionals, options = docopter.parse(doc)
+    assert usage == "prog [-a] FILE"
+    assert [p.spellings for p in positionals] == [["FILE"]]
+    assert [(opt.short, opt.long, opt.description) for opt in options] == [
+        ("-a", "--all", "Everything.")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("doc", "expected"),
+    [
+        (
+            "Usage: prog [-a] FILE\n  or:  prog -b DIR\n",
+            "prog [-a] FILE\n  or:  prog -b DIR",
+        ),
+        ("Usage:\tprog [-a] FILE\n\tprog -b DIR\n", "prog [-a] FILE\n\tprog -b DIR"),
+        (" Usage:\tprog [-a] FILE\n\tprog -b DIR\n", "prog [-a] FILE\n\tprog -b DIR"),
+        ("Usage:\n  prog [-a] FILE\n  prog -b DIR\n", "prog [-a] FILE\n  prog -b DIR"),
+    ],
+)
+def test_a_synopsis_continues_on_lines_aligned_with_its_program_name(doc, expected):
+    """GNU's `or:` line, a tab, or a marker alone on its line keep each alternative.
+
+    Where the marker stands alone, nothing on its line states a column.  The usage
+    text keeps every line as written, tabs included.
+    """
+    usage, _prefix, positionals, _options = docopter.parse(doc)
+    assert usage == expected
+    assert [p.spellings for p in positionals] == [["FILE", "DIR"]]
+
+
+def test_a_flag_and_its_description_end_a_synopsis_with_no_column():
+    """With the marker alone on its line, an option line still ends the synopsis."""
+    doc = "Usage:\n  prog [-a]\n[-b] FILE\n  -a, --all  Everything.\n"
+    usage, _prefix, positionals, options = docopter.parse(doc)
+    assert usage.splitlines() == ["prog [-a]", "[-b] FILE"]
+    assert [p.spellings for p in positionals] == [["FILE"]]
+    assert [(opt.short, opt.description) for opt in options] == [
+        ("-a", "Everything."),
+        ("-b", ""),
+    ]
+
+
+def test_a_wrapped_synopsis_line_opening_with_a_flag_is_no_option(capsys):
+    """argparse may wrap a synopsis so that a line opens with a flag, as zipfile's.
+
+    Read as an entry, `-c <n> [<f> ...] | -t <z>)` declares `-t` a second time.
+    """
+    doc = """usage: prog [-h] (-l <z> | -e <z> <d> |
+                 -c <n> [<f> ...] | -t <z>)
+
+options:
+  -l <z>          List.
+  -e <z> <d>      Extract.
+  -c <n> [<f> ...]
+                  Create.
+  -t <z>          Test.
+"""
+    _usage, _prefix, positionals, options = docopter.parse(doc)
+    assert capsys.readouterr().err == ""
+    assert [opt.short for opt in options] == ["-l", "-e", "-c", "-t", "-h"]
+    assert [p.spellings for p in positionals] == [["<d>", "<f>"]]
+
+
 def test_unparseable_usage_line_degrades_instead_of_crashing(capsys):
     """Options survive when only the usage line is unreadable.
 
-    A partial task the user finishes by hand beats a traceback: the degraded files
-    in `tests/corpus` hit this, and their options are still recoverable.
+    A partial task the user finishes by hand beats a traceback, and the options are
+    still recoverable.
     """
     _usage, cli_prefix, positionals, options = docopter.parse(ARITY_OVERLOAD)
     assert cli_prefix == "tool"

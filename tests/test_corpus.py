@@ -4,7 +4,8 @@
 the outcome the help-text reader reaches on it.  The outcome is a class rather than
 generated text, so a template edit never touches it, while a reader change that
 moves a file from one class to another fails here.  The two fixtures in
-`tests/example` parse cleanly; most of these files do not, and that is the point.
+`tests/example` yield exactly their positionals; most of these files do not, and
+that is the point.
 """
 
 import csv

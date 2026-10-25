@@ -12,14 +12,14 @@ name	outcome	stream	version	command	shape
 tar	usage-not-found	stdout	bsdtar 3.5.3	/usr/bin/tar --help	no usage: marker
 gh-repo-clone	usage-not-found	stdout	gh 2.102.0	gh repo clone --help	Cobra heading USAGE, without a colon
 timeit	usage-not-found	stdout	Python 3.13.12	python3 -m timeit -h	two usage: markers in one docstring
-zipfile	degraded	stdout	Python 3.13.12	python3 -m zipfile -h	wrapped synopsis line opening with -c is read as an option entry, declaring -t twice
-samtools-stats	degraded	stdout	samtools 1.23.1	samtools stats --help	options block follows the synopsis with no blank line and is read as usage
+zipfile	parsed	stdout	Python 3.13.12	python3 -m zipfile -h	the second value of -e and the list after the value of -c are read as one positional; the wrapped synopsis line opening with -c is synopsis, not an option entry
+samtools-stats	parsed	stdout	samtools 1.23.1	samtools stats --help	[OPTIONS] read as a positional; the options block directly under the synopsis ends it
 wgsim	parsed	stderr	wgsim 1.23.1	wgsim	positionals recovered cleanly
 cnvkit-batch	parsed	stdout	CNVkit 0.9.15.dev0	cnvkit.py batch -h	positionals recovered cleanly once the brackets argparse writes around an optional value, as in [-p [PROCESSES]], are removed on a second reading
 miniwdl-check	parsed	stdout	miniwdl 1.14.2	miniwdl check --help	argparse's WDL_URI [WDL_URI ...] read as two positionals
 tabix	parsed	stdout	htslib 1.23.1	tabix --help	[OPTIONS] and ... read as positionals
 bedtools-intersect	parsed	stderr	bedtools 2.31.1	bedtools intersect --help	the options block omits the -a and -b the synopsis names, so their values are read as positionals; options with no placeholder, such as -f, read as switches
-htsfile	parsed	stdout	htslib 1.23.1	htsfile --help	options block follows the synopsis with no blank line, and its prose is read as positionals
+htsfile	parsed	stdout	htslib 1.23.1	htsfile --help	positionals recovered cleanly; the options block directly under the synopsis ends it
 ls	parsed	stderr	macOS 26.6.2	/bin/ls --help	no options block, so the value of -D is read as a positional
 jq	parsed	stdout	jq 1.7.1-apple	jq --help	<jq filter> split at its space
 cnvkit-import-rna	parsed	stdout	CNVkit 0.9.15.dev0	cnvkit.py import-rna -h	FILES [FILES ...] read as two positionals, while -n NORMAL [NORMAL ...] is one option taking a list; a wrapped line opening with --normal is prose, and its [Default: polish] is --normalize-method's
