@@ -63,6 +63,11 @@ _PLAIN_FLAG = re.compile(r"--?\w[\w.-]*")
 # previous alternative as a bare word, and so as a positional named `or`.
 _CONTINUATION = re.compile(r"^[ \t]*or:(?=[ \t]|$)", re.IGNORECASE | re.MULTILINE)
 
+# Usage notation: a bracket, a parenthesis, a brace, an angle bracket, a bar, an
+# ellipsis, or a token opening with a hyphen.  `_synopsis` reads a line of the usage
+# section that carries none of it as prose or a heading, not as a wrapped synopsis.
+_NOTATION = re.compile(r"[\[\](){}<>|]|\.\.\.|(?<!\S)-")
+
 
 class UsageNotFound(Exception):
     """The help text has no single ``usage:`` section to read a command line from."""
@@ -147,11 +152,18 @@ def _synopsis(doc, printable):
     aligns it, while a section heading, an options block or prose is not; a line
     opening with GNU's ``or:`` continues the synopsis however it is indented.  It
     also ends at a line opening with a flag whose description follows two spaces
-    later, as `_option_entries` reads an option line, which is the only end a
-    synopsis has where the marker stands alone on its line.  Indentation counts
-    the columns a tab occupies on screen.  The program name's column is measured
-    with `str.expandtabs` rather than `_expanded`, which would move it a stop
-    further where a tab follows text ending one column before a stop.
+    later, as `_option_entries` reads an option line.  Indentation counts the
+    columns a tab occupies on screen.  The program name's column is measured with
+    `str.expandtabs` rather than `_expanded`, which would move it a stop further
+    where a tab follows text ending one column before a stop.
+
+    Where the marker stands alone on its line, nothing states that column, and pip
+    wraps its synopsis at column 0, so indentation ends nothing.  There a line also
+    ends the synopsis when it opens with a word other than the program name, not
+    written in capitals, and carries no usage notation, as prose or a heading such
+    as ``Options:`` does.  A wrapped synopsis line carries notation, and a further
+    alternative opens with the program name.  A word in capitals may be a
+    placeholder, which argparse wraps onto a line of its own, so it ends nothing.
     """
     # `printable_usage` has found exactly one marker, spelled as it spells it.
     marker = re.search(r"[Uu][Ss][Aa][Gg][Ee]:", doc)
@@ -160,6 +172,7 @@ def _synopsis(doc, printable):
     line = doc[start:].split("\n", 1)[0]
     named = line[marker.end() - start :].lstrip()
     column = len(line[: len(line) - len(named)].expandtabs(8)) if named else None
+    program = printable.split()[1]
     lines = printable.split("\n")
     for number in range(1 if named else 2, len(lines)):
         if _CONTINUATION.match(lines[number]):
@@ -169,6 +182,14 @@ def _synopsis(doc, printable):
         if column is not None and len(expanded) - len(head) < column:
             break
         if head[:1] == "-" and _ENTRY.match(head) and head.partition("  ")[2].strip():
+            break
+        word = head.partition(" ")[0]
+        if (
+            not named
+            and word != program
+            and _is_command_word(word)
+            and not _NOTATION.search(head)
+        ):
             break
     else:
         number = len(lines)

@@ -252,6 +252,41 @@ def test_a_flag_and_its_description_end_a_synopsis_with_no_column():
     ]
 
 
+@pytest.mark.parametrize(
+    "after",
+    [
+        "  Download files and their dependencies\n",
+        "  The default action is to add or replace entries.\n",
+        "Options:\n  -a  Everything.\n",
+    ],
+)
+def test_prose_or_a_heading_ends_a_synopsis_with_no_column(after):
+    """prefetch describes its synopsis on the next line, and zip writes a paragraph.
+
+    Neither line carries usage notation or opens with the program name.
+    """
+    usage, _prefix, positionals, _options = docopter.parse(
+        f"Usage:\n  prog [-a] <in>\n{after}"
+    )
+    assert usage == "prog [-a] <in>"
+    assert [p.spellings for p in positionals] == [["<in>"]]
+
+
+@pytest.mark.parametrize(
+    "wrapped", ["[package-index-options] <file> ...", "install <pkg>", "FILE"]
+)
+def test_a_line_with_notation_or_a_placeholder_continues_a_synopsis(wrapped):
+    """pip wraps at column 0, and argparse may wrap a bare placeholder.
+
+    `install <pkg>` opens with a word that is not the program name, but carries
+    notation.
+    """
+    usage, _prefix, _positionals, _options = docopter.parse(
+        f"Usage:\n  prog [options] <req>\n{wrapped}\n"
+    )
+    assert usage == f"prog [options] <req>\n{wrapped}"
+
+
 def test_a_wrapped_synopsis_line_opening_with_a_flag_is_no_option(capsys):
     """argparse may wrap a synopsis so that a line opens with a flag, as zipfile's.
 

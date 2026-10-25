@@ -179,7 +179,7 @@ Because the corpus is not a sample, its counts describe the corpus and not how o
   The rest run to completion with extra positionals: summary placeholders such as `[OPTIONS]` and `...` (`tabix`, `samtools stats`), option values the reader cannot attribute to an option (`ls`, which has no options block, `bedtools intersect`, whose options block omits the `-a` and `-b` its synopsis names, and `python3 -m zipfile`, whose `-e` takes two values), or a placeholder split at its space (`jq`'s `<jq filter>`).
   argparse's `X [X ...]` for a positional with `nargs="+"` becomes two positionals, one required and one an optional array (`miniwdl check`, `cnvkit.py import-rna`).
 
-The reliable shape is a single synopsis naming at most one fixed subcommand, written directly after the program name, where no flag's arity differs between the options block and the synopsis, and which ends at a blank line or at a line indented less than the program name.
+The reliable shape is a single synopsis naming at most one fixed subcommand, written directly after the program name, where no flag's arity differs between the options block and the synopsis, and which ends at a blank line, at a line indented less than the program name, or, where the marker stands alone on its line, at a line of prose.
 argparse-generated help wraps the synopsis at `COLUMNS` and aligns each wrapped line under the program name or deeper, so a wrapped line that opens with a flag no longer matters: `python3 -m zipfile`, which degraded at 80 columns, parses at every `COLUMNS` from 30 to 220 in steps of 10.
 Hand-written C help may place the options block directly under the synopsis, as `samtools stats` and `htsfile` do, which D23 reads, or leave the block out (`ls`).
 Both fixtures in `tests/example/` sit inside the shape, which is why they were never a sample.
@@ -224,11 +224,6 @@ The five misses are `region`, `reg`, `prefix`, `sql` and `arguments`, the first 
 No name-based rule was adopted: a filename-word list scored 65 of 83, splits one tool's own positionals between `File` and `String`, and is open-ended, while a list of string names such as `region` must leave out cnvkit's `interval`, which is a BED file.
 The angle-bracket convention is no signal either, since cnvkit's `targets` and samtools' `region` are both bare words.
 An option value placeholder such as `-t FILE` would be real evidence, but `Option.parse` discards it; `docopter._option_entries` yields each options-block entry's lines, which is where reading one would start.
-
-**A synopsis under a marker that stands alone on its line ends only at an option line.** `docopter._synopsis` ends a synopsis at a line indented less than the program name, and where `Usage:` stands alone, nothing states that column, so only a blank line or a line opening with a flag and a description two spaces later ends it.
-Prose written under such a synopsis is read as part of it: `prefetch` describes each alternative on the line after it, and Info-ZIP's `zip`, whose `Usage:` ends its title line, with the synopsis at column 0 on the next, continues with a paragraph of prose.
-A heading such as `Options:` written directly under such a synopsis is likewise read as a positional.
-Taking the column from the first synopsis line instead would cut `pip install`'s synopsis, whose wrapped lines start at column 0.
 
 **A subcommand after an option group is read as an argument.** The command words are the program name and the literal words written directly after it, so `Usage: prog [-v] sub <x>` wraps `prog` and declares an input `sub`, typed `File` as every positional is, which the generated task cannot pass as the word `sub`.
 The pattern tree cannot tell such a word from a lowercase placeholder: `tr [-Ccsu] string1 string2` and the fixture's `cnvkit.py antitarget [-h] ... targets` have the same shape.
@@ -421,14 +416,26 @@ Both fixtures generate byte-identical WDL and Nextflow, verified by comparing th
 Skipping every entry in the usage section would fix zipfile but read the 208 words of samtools stats' options block as positionals; the two need a boundary inside the section.
 `docopter._synopsis` now ends the synopsis at the first line, after the marker's, that is indented less than the program name, where the marker's line names the program, since argparse aligns a wrapped synopsis line under the program name or deeper and hand-written help aligns it there or a tab further, while a heading, an options block or prose is indented less.
 A line opening with GNU's `or:` continues the synopsis however it is indented, and indentation counts the columns a tab occupies, as D20's does.
-The synopsis also ends at a line opening with a flag whose description follows two spaces later, as `_option_entries` reads an option line, which is the only end it has where the marker stands alone on its line.
-A heading rule, such as a line ending in `:`, was measured and adds nothing: of the 48 usage sections among the 196 help texts that run past their synopsis, the two rules cut 45 exactly where a reader would end the synopsis, `java`'s one line early, since its further alternatives open with `or` and no colon, and two too late, as the open defect above describes, while a heading rule with the two-space rule cut only 20 exactly.
+The synopsis also ends at a line opening with a flag whose description follows two spaces later, as `_option_entries` reads an option line, which was the only end it had where the marker stands alone on its line until D24.
+A heading rule, such as a line ending in `:`, was measured and adds nothing: of the 48 usage sections among the 196 help texts that run past their synopsis, the two rules cut 45 exactly where a reader would end the synopsis, `java`'s one line early, since its further alternatives open with `or` and no colon, and two too late, which D24 resolves, while a heading rule with the two-space rule cut only 20 exactly.
 No line of the synopsis starts an options-block entry, and the usage text the templates comment ends with the synopsis, so `curl`'s comment is its synopsis line rather than 259 lines that repeat `parameter_meta`.
 Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24, 53 records change, no CLI prefix moves, and their inputs fall from 4,152 to 1,414.
 Seven records move from degraded to parsed: both captures of zipfile and of `samtools stats`, `curl`, `plot-bamstats` and `python3`; four remain degraded, for other reasons.
 `htsfile` yields exactly `FILE` and `DESTFILE`, and `bsd-make` and `gnu-make`, whose options blocks follow the synopsis with no blank line, one positional each, `target`, where D18 had left 142 and 180.
 189 option declarations disappear, none with a description, each read from a line of usage that is not synopsis or from prose, and three appear: `bsd-diff`'s `-y` and `--side-by-side` from its synopsis, and `ssh-keygen`'s `-s` as a switch, where its wrapped synopsis line had declared it with a value.
 The corpus's zipfile, `samtools stats` and `htsfile` pass `miniwdl check` and `nextflow lint`, and both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
+
+**D24** — prose under a synopsis whose `Usage:` marker stands alone on its line was read as usage.
+Where the marker stands alone, nothing states the program name's column, so D23's indentation rule cannot apply, and only a blank line or an option line ended the synopsis.
+`prefetch` describes each alternative on the line after it, and Info-ZIP's `zip`, whose `Usage:` ends its title line, continues its synopsis with a paragraph of prose; both were read as positionals.
+Taking the column from the first synopsis line instead ends nothing in the survey, since prefetch's prose is at the synopsis's column and zip's deeper, and it would cut `pip install`, which wraps at column 0.
+`docopter._synopsis` now also ends such a synopsis at a line that opens with a word other than the program name, not written in capitals, and that carries no usage notation: no bracket, parenthesis, brace, angle bracket, bar, ellipsis or token opening with a hyphen.
+A wrapped synopsis line carries notation, as pip's `[package-index-options] ...` does, and a further alternative opens with the program name; a word in capitals may be a placeholder that argparse wrapped onto a line of its own.
+The rule applies only where the marker stands alone: under a marker that names the program, argparse wraps a bare lowercase placeholder such as cnvkit's `targets` onto its own line, which the rule would cut.
+A heading such as `Options:` under such a synopsis now ends it too, while one in capitals, `OPTIONS:`, still reads as a positional, as does prose that carries notation; no captured help text has either.
+`java`'s further alternatives, which open with `or` and no colon, are still cut, because each is followed by a parenthesized description, such as `(to execute a jar file)`, that a continuation rule would read as synopsis.
+Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24, two records change, `bsd-zip` and `prefetch`, each losing the inputs its prose declared, and no option, CLI prefix or warning moves; the extent of the synopsis is unchanged for `pip install` and `pip download` at `COLUMNS` of 60, 70, 80, 100, 120 and 200.
+Both fixtures and the corpus generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
 
 ### Working on the vendored parser
 
