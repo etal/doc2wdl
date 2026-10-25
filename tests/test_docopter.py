@@ -583,6 +583,56 @@ def test_an_ellipsis_after_a_flag_marks_a_count_not_a_spelling():
     )
 
 
+def test_a_flag_the_synopsis_spells_otherwise_is_passed_once(capsys):
+    """git's synopsis names `--dry-run`, and its options block `--[no-]dry-run`.
+
+    The synopsis's option has no entry and so no description; the documented one
+    is kept, and the other left out with a warning.
+    """
+    doc = "Usage: tool [--dry-run] <in>\n\nOptions:\n  --[no-]dry-run  Show only.\n"
+    task = docopter.transform(*docopter.parse(doc))
+    assert [(arg.option_flag, arg.doc) for arg in task["cli_args"][1:]] == [
+        ("--dry-run", "Show only.")
+    ]
+    assert "another option also passes" in capsys.readouterr().err
+
+
+def test_an_entry_written_twice_alike_is_passed_once(capsys):
+    """The second of two identical entries is left out with a warning.
+
+    docopt compares options by their text, so only identity tells the two apart.
+    """
+    doc = "Usage: tool [options]\n\nOptions:\n  -v  Verbose.\n  -v  Verbose.\n"
+    task = docopter.transform(*docopter.parse(doc))
+    assert [arg.option_flag for arg in task["cli_args"]] == ["-v"]
+    assert "another option also passes" in capsys.readouterr().err
+
+
+def test_among_entries_passing_one_flag_the_first_described_wins():
+    """gcc documents `-fcf-protection=<value>` before the described bare switch.
+
+    An entry with no description is often prose read as an entry.
+    """
+    doc = (
+        "Usage: tool [options]\n\nOptions:\n"
+        "  -x VALUE\n"
+        "  -x  Turn it on.\n"
+        "  -x  Turn it on again.\n"
+    )
+    task = docopter.transform(*docopter.parse(doc))
+    assert [(arg.option_has_value, arg.doc) for arg in task["cli_args"]] == [
+        (False, "Turn it on.")
+    ]
+
+
+def test_flags_that_differ_stay_apart_even_where_their_names_coincide(capsys):
+    """torchrun documents both `--log-dir` and `--log_dir`; the writer numbers them."""
+    doc = "Usage: tool [options]\n\nOptions:\n  --log-dir D  Logs.\n  --log_dir D  Logs.\n"
+    task = docopter.transform(*docopter.parse(doc))
+    assert [arg.option_flag for arg in task["cli_args"]] == ["--log-dir", "--log_dir"]
+    assert capsys.readouterr().err == ""
+
+
 def descriptions(doc):
     """Each parsed option's ``(short, long)`` flags and description."""
     _usage, _prefix, _positionals, options = docopter.parse(doc)

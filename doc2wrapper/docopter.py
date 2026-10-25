@@ -254,11 +254,12 @@ def transform(usage, cli_prefix, positionals, options):
         for pos in positionals
     ]
 
+    # docopt's Option.name is the long flag when there is one and the short flag
+    # otherwise, which is how a short-only `-h` gets recognized too.
+    flags = [_passable_flag(opt.name) for opt in options]
+    passing = _one_per_flag(options, flags)
     has_output_file = False
-    for opt in options:
-        # docopt's Option.name is the long flag when there is one and the short
-        # flag otherwise, which is how a short-only `-h` gets recognised too.
-        option_flag = _passable_flag(opt.name)
+    for opt, option_flag in zip(options, flags):
         if option_flag is None:
             print(
                 f"Warning: the option '{opt.name}' is written in a notation that "
@@ -266,7 +267,14 @@ def transform(usage, cli_prefix, positionals, options):
                 file=sys.stderr,
             )
             continue
-        if option_flag in _SKIPPED_OPTIONS and opt.argcount == 0:
+        if _is_skipped(option_flag, opt):
+            continue
+        if passing[option_flag] is not opt:
+            print(
+                f"Warning: the option '{opt.name}' passes '{option_flag}', which "
+                "another option also passes, so the task leaves it out.",
+                file=sys.stderr,
+            )
             continue
         # A repeated placeholder is argparse's `nargs="+"`: one flag, then the list.
         is_array = opt.repeated is not None
@@ -311,6 +319,34 @@ def transform(usage, cli_prefix, positionals, options):
         cli_args=cli_args,
         has_output_file=has_output_file,
     )
+
+
+def _is_skipped(flag, option):
+    """Is this a valueless help or version flag, which no task input passes?"""
+    return flag in _SKIPPED_OPTIONS and option.argcount == 0
+
+
+def _one_per_flag(options, flags):
+    """The option that passes each flag, keyed by the flag, one option for each.
+
+    Two options may pass one flag: an option documented twice, as gcc documents
+    ``-fcf-protection`` both as a switch and with an attached value, and an option
+    the synopsis alone names whose spelling the options block writes otherwise, as
+    git's synopsis names ``--dry-run`` beside the documented ``--[no-]dry-run``.
+    Among the options passing a flag, the first with a description wins, and where
+    none has one, the first does.  A line of prose read as an entry has none, and
+    the options the synopsis alone names follow every documented one and have none.
+    `flags` holds each option's passable flag, None where it has none; such options
+    and skipped ones take part in no choice.  Options passing different flags are
+    never merged, even where their input names would coincide.
+    """
+    chosen = {}
+    for option, flag in zip(options, flags):
+        if flag is None or _is_skipped(flag, option):
+            continue
+        if flag not in chosen or (option.description and not chosen[flag].description):
+            chosen[flag] = option
+    return chosen
 
 
 def _is_command_word(token):

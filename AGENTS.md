@@ -393,7 +393,7 @@ A flag with no brackets was unchanged until D25, and the change is confined to `
 An option is left out, rather than passed by another spelling its entry gives, because that spelling may take the same optional attached value, as git's `-S, --[no-]gpg-sign[=<key-id>]` does.
 Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24, 254 options in 35 files carry a bracket in their flag; 135 are passed by their shortest spelling, 118 of them in git subcommands, and 119 are left out, 15 of them bq's absl options, whose `--[no]quiet:` ends in a colon.
 35 records change, none in its CLI prefix or positionals.
-A flag rewritten to the spelling of another option, as git-commit's `--[no-]dry-run` meets the `--dry-run` its synopsis names, gives two inputs passing one flag, which the writer's unique names do not prevent.
+A flag rewritten to the spelling of another option, as git-commit's `--[no-]dry-run` meets the `--dry-run` its synopsis names, gave two inputs passing one flag, which the writer's unique names do not prevent; D26 resolves this.
 The cnvkit fixture generates byte-identical WDL and Nextflow; the samtools fixture changes only in its three bracketed options, whose inputs are now `region_file`, `target_file` and `excl_flags`.
 
 **D22** — argparse's notation for an option taking one or more values put a positional in the synopsis.
@@ -448,6 +448,18 @@ Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24
 In the corpus only `jq` changes, losing the `arg_` input its `--` entry declared; the changed `fastq-dump`, `prefetch`, `npm-install`, `bq`, `uv` and `tree` documents pass `miniwdl check` and `nextflow lint`.
 Both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
 Not covered: a bracketed value spelled inside the synopsis, as in `ls [--color[=WHEN]] FILE`, still registers a switch `--color` and a positional `WHEN`, since the synopsis is read before any flag is rewritten; no captured help text does so.
+
+**D26** — two inputs could pass the same flag.
+The writer makes names unique, never flags, and the help-text reader produced options that pass one flag from three sources: an option documented twice, as gcc documents `-fcf-protection` both as a switch and as `-fcf-protection=<value>`; a line of prose read as an entry; and a synopsis-only option whose spelling the options block writes otherwise, since `parse_pattern` compares the synopsis's `--dry-run` with the documented `--[no-]dry-run` before D21 rewrites it, finds no match, and appends an option of its own.
+Over 196 help texts, 77 inputs in 12 files passed a flag that another input of the same task already passed.
+`docopter.transform` now passes each flag from one option, chosen by `_one_per_flag`: among the options passing a flag, the first with a description, and where none has one, the first, and every other is left out with a warning on standard error.
+A synopsis-only option has no description and follows every documented one, so the documented option wins without a separate rule, and so does a described entry over a prose fragment: preferring the first alone would keep conda-create's prose line `--dry-run or --download-only is specified.` as `--download-only`, taking a value, and gcc's `-fcf-protection=<value>`, rendered `-fcf-protection full`, which clang reads as an input file, over the described switch.
+The flag that decides is the one `_passable_flag` returns, never the input name, so flags that differ but sanitize alike, such as torchrun's `--log-dir` and `--log_dir`, stay two inputs and the writer numbers them.
+The rule is in `transform` rather than `parse`, because the option list is `parse_pattern`'s input: removing an option there changes how the synopsis reads its flags, and upstream raises on a flag documented twice that the synopsis names, which is why `conda-create` and `zstd` degrade.
+No arity and no text are merged between the declarations of a flag, so a form is lost where two declarations differ in arity: `du`'s `--time` keeps its switch and loses `--time=WORD`, which `du` accepts only attached.
+Two options that GNU documents with a short flag of their own beside a long flag taking a fixed value, `ls`'s `-p, --indicator-style=slash` and `sort`'s `-C, --check=silent`, are left out, since docopt names each by its long flag.
+Over the 196 help texts 12 records change, each only by losing inputs, and no CLI prefix or positional moves; the git-commit synopsis's `--squash <commit>` still declares a positional `commit`, since the synopsis registers `--squash` as a switch before the rewrite.
+Both fixtures and the corpus generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
 
 ### Working on the vendored parser
 
