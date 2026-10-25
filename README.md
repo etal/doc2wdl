@@ -58,6 +58,7 @@ Known issues
 - Help text gives `parameter_meta` an option's description when it follows the flags on the same line after at least two spaces, which is docopt's rule, or when it begins on the lines after the flags; samtools writes `-R, --read-group-file FILE ...are in a read group listed in FILE` with one space, so that description is empty.
   A description ends at a blank line or at a line indented no deeper than its option, so only its first paragraph is kept, and a positional argument's `parameter_meta` entry lists only its alternative spellings, if it has any.
 - A `count` option such as `-v` becomes a Boolean, so the generated task can pass it at most once.
+- An option whose flag carries brackets other than an optional part of its name, such as `--color[=WHEN]`, is left out with a warning, because a task cannot pass a value attached to its flag optionally; an optional part, as in samtools' `--region[s]-file`, is dropped from the flag instead.
 
 Reading help text is best-effort by nature, and its limits are recorded rather than guessed.
 `tests/corpus/` holds 14 help texts captured from real tools, chosen to represent the shapes the reader meets rather than as a sample, and `tests/corpus/manifest.tsv` records the command that produced each and what the reader makes of it.

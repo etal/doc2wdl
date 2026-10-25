@@ -235,8 +235,7 @@ The pattern tree cannot tell such a word from a lowercase placeholder: `tr [-Ccs
 Reading a word as a command word when an angle-bracketed or uppercase placeholder follows it and every alternative agrees would accept `prog [-v] sub <x>`, but no synopsis among the 196 help texts of 2026-10-24 has that shape, and the rule would read `tool [-v] infile <outfile>` the same way, so it was not adopted.
 A subcommand that a `Commands:` section of the help text also names would be real evidence; no reader reads such a section yet.
 
-Smaller known wrongness, low priority: help-text notation leaks into flags, so
-samtools' `--region[s]-file FILE` becomes a literal flag `--region[s]-file`.
+Smaller known wrongness, low priority: help-text notation other than brackets still leaks into flags, such as the `-A|--accession` of `fastq-dump`, read as one flag with a pipe in it, and the trailing colon of absl help, as in bq's `--apilog:`.
 
 ### Resolved
 
@@ -389,6 +388,19 @@ The six bedtools records that change, five captured subcommands and the corpus's
 The captured `samtools view` gains two spurious options, from example command lines in its notes that are indented with a tab and fall left of the description column carried from the options block, the gap D17 describes.
 bedtools writes no placeholder for an option's value, so options such as `-f`, a minimum overlap fraction, become switches.
 Both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after, and the corpus's `bedtools intersect` passes `miniwdl check` and `nextflow lint`.
+
+**D21** — help-text notation leaked into flags.
+docopt reads an options-block entry's flags as written, so samtools' `--region[s]-file`, `--target[s]-file` and `--excl[ude]-flags` were passed literally, and samtools 1.23.1 rejects each as an unrecognized option while accepting `--region-file`, `--target-file` and `--excl-flags`.
+`docopter.transform` now passes the flag `_passable_flag` gives for an option's documented spelling.
+A bracketed group of letters, digits and hyphens followed by more of the name is an optional part, and is removed, leaving the shortest spelling the notation names, so git's `--[no-]verbose` passes `--verbose`, never its negation, and the input is named from that flag.
+Any other bracket names no single flag, and the option is left out with a warning on standard error: a group that ends the flag, as in `--color[=WHEN]` and `-W[level]`, makes its value optional and attached to the flag, which a task cannot express, and perl's `-[mM][-]module` is a set of letters.
+The warning names the flag as `Option.parse` stored it, which for `--color[=WHEN]` is `--color[`, since it splits the flags at `=`.
+A flag with no brackets is unchanged, and the change is confined to `transform`, so `parse`, and with it every outcome class, is unchanged: removing an entry from the options list instead would change how the synopsis reads the flags it names.
+An option is left out, rather than passed by another spelling its entry gives, because that spelling may take the same optional attached value, as git's `-S, --[no-]gpg-sign[=<key-id>]` does.
+Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24, 254 options in 35 files carry a bracket in their flag; 135 are passed by their shortest spelling, 118 of them in git subcommands, and 119 are left out, 15 of them bq's absl options, whose `--[no]quiet:` ends in a colon.
+35 records change, none in its CLI prefix or positionals.
+A flag rewritten to the spelling of another option, as git-commit's `--[no-]dry-run` meets the `--dry-run` its synopsis names, gives two inputs passing one flag, which the writer's unique names do not prevent.
+The cnvkit fixture generates byte-identical WDL and Nextflow; the samtools fixture changes only in its three bracketed options, whose inputs are now `region_file`, `target_file` and `excl_flags`.
 
 ### Working on the vendored parser
 

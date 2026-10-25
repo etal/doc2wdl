@@ -329,6 +329,35 @@ def test_a_short_only_help_flag_is_still_skipped():
     assert [arg.name for arg in task["cli_args"]] == ["in"]
 
 
+def test_an_optional_part_of_a_flag_name_is_dropped_from_the_flag(help_text):
+    """samtools rejects `--region[s]-file`; the shortest spelling is one it takes."""
+    task = docopter.transform(*docopter.parse(help_text("samtools-view")))
+    flags = {arg.name: arg.option_flag for arg in task["cli_args"]}
+    assert flags["region_file"] == "--region-file"
+    assert flags["target_file"] == "--target-file"
+    assert flags["excl_flags"] == "--excl-flags"
+    assert not any("[" in (arg.option_flag or "") for arg in task["cli_args"])
+
+
+def test_an_optional_prefix_names_the_flag_not_its_negation():
+    """`--[no-]verbose` passes `--verbose` when true, as its input's name says."""
+    doc = "Usage: tool [options]\n\nOptions:\n  -v, --[no-]verbose  Be loud.\n"
+    task = docopter.transform(*docopter.parse(doc))
+    [arg] = task["cli_args"]
+    assert (arg.name, arg.option_flag) == ("verbose", "--verbose")
+
+
+@pytest.mark.parametrize(
+    "entry", ["--color[=WHEN]", "-W[level]", "-[mM][-]module", "--a[b[c]]-d"]
+)
+def test_brackets_that_are_no_optional_part_of_a_name_skip_the_option(entry, capsys):
+    """An optional attached value, or a set of letters, names no flag to pass."""
+    doc = f"Usage: tool [options]\n\nOptions:\n  {entry}  Something.\n  -q  Quiet.\n"
+    task = docopter.transform(*docopter.parse(doc))
+    assert [arg.option_flag for arg in task["cli_args"]] == ["-q"]
+    assert "names no single flag" in capsys.readouterr().err
+
+
 def descriptions(doc):
     """Each parsed option's ``(short, long)`` flags and description."""
     _usage, _prefix, _positionals, options = docopter.parse(doc)

@@ -49,6 +49,11 @@ _WRAPPED_WORD = re.compile(
 # verbatim, so that splitting the padded text yields the tokens it reads.
 _PATTERN_SYMBOL = re.compile(r"([\[\]\(\)\|]|\.\.\.)")
 
+# A bracketed optional part inside a flag's name, as in `--region[s]-file`, and
+# what a flag is once its optional parts are removed; `_passable_flag` reads them.
+_OPTIONAL_PART = re.compile(r"\[[A-Za-z0-9-]+\](?=[\w-])")
+_PLAIN_FLAG = re.compile(r"--?\w[\w.-]*")
+
 # The `or:` that opens each further synopsis line in GNU help text.  `formal_usage`
 # splits alternatives at the program name, so this token would otherwise end the
 # previous alternative as a bare word, and so as a positional named `or`.
@@ -173,7 +178,14 @@ def transform(usage, cli_prefix, positionals, options):
     for opt in options:
         # docopt's Option.name is the long flag when there is one and the short
         # flag otherwise, which is how a short-only `-h` gets recognised too.
-        option_flag = opt.name
+        option_flag = _passable_flag(opt.name)
+        if option_flag is None:
+            print(
+                f"Warning: the option '{opt.name}' is written in a notation that "
+                "names no single flag, so the task leaves it out.",
+                file=sys.stderr,
+            )
+            continue
         if option_flag in _SKIPPED_OPTIONS and opt.argcount == 0:
             continue
         if option_flag in _OUTPUT_OPTIONS and opt.argcount == 1:
@@ -229,6 +241,26 @@ def _command_words(usage):
     """
     tokens = usage.splitlines()[0].split()
     return tokens[:1] + list(itertools.takewhile(_is_command_word, tokens[1:]))
+
+
+def _passable_flag(flag):
+    """The flag a task passes for an option's documented spelling, or None.
+
+    Help text may write an optional part of a flag's name in brackets, as samtools
+    writes ``--region[s]-file`` and git ``--[no-]verbose``, and docopt keeps the
+    brackets as part of the flag, which no tool accepts.  A bracketed group of
+    letters, digits and hyphens that is followed by more of the name is removed,
+    which leaves the shortest spelling the notation names, so ``--[no-]verbose``
+    becomes ``--verbose`` rather than its negation.  Any other bracket is not
+    read: a group that ends the flag, as in ``--color[=WHEN]``, makes its value
+    optional and attached, which a task cannot express, and perl's
+    ``-[mM][-]module`` is a set of letters rather than an optional part.  Such an
+    option has no flag to pass.  A flag with no brackets is returned unchanged.
+    """
+    if "[" not in flag and "]" not in flag:
+        return flag
+    plain = _OPTIONAL_PART.sub("", flag)
+    return plain if _PLAIN_FLAG.fullmatch(plain) else None
 
 
 def _identifier(token):
