@@ -49,6 +49,11 @@ def unpack_tasks(arg_parser, prog):
         # is not there, where it means "verbose" as often as "version".
         if isinstance(action, (argparse._HelpAction, argparse._VersionAction)):
             continue
+        # `nargs=SUPPRESS` consumes no command-line strings and never writes its
+        # `dest`, so the action is no input.  Skipped here rather than in
+        # `_arguments`, which must not count it among the actions sharing a `dest`.
+        if action.nargs == argparse.SUPPRESS:
+            continue
 
         if isinstance(action, argparse._SubParsersAction):
             for cmd_name, sub_ap in action.choices.items():
@@ -189,7 +194,7 @@ def _argument(action, name):
     is_required = (
         action.required
         if is_option
-        else action.nargs not in ("?", "*", argparse.REMAINDER, argparse.SUPPRESS)
+        else action.nargs not in ("?", "*", argparse.REMAINDER)
     )
     # Arity decides, not the type of `dest`: `nargs=1` takes one value into a
     # one-item list and is modeled as the scalar it is on the command line.

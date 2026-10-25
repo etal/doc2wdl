@@ -194,6 +194,8 @@ Switches render faithfully with three deliberate gaps.
 A `required=True` `store_true` declares `Boolean x = false`, so a caller may omit what argparse would demand.
 `nargs=1` is modeled as the scalar it is on the command line, although argparse hands the program a one-item list.
 
+An action with `nargs=SUPPRESS` consumes nothing and is no input, so a `required=True` option of that kind, which argparse still demands, is left out.
+
 ### What the Nextflow writer emits
 
 Measured on Nextflow 25.10.4 on 2026-10-23, with `nextflow lint` and with `nextflow run` on the rendered command lines.
@@ -484,6 +486,14 @@ Over the subcommands of `cnvlib.commands.AP` at `COLUMNS=80`, all 34 positionals
 Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24, 38 of 532 positionals in 27 files gain a description, and only `parameter_meta` moves; no input, warning, CLI prefix or Nextflow line changes.
 Two kinds are not what a reader would write: argparse's subcommand placeholder, such as `{batch,target,...}`, takes the whole list of subcommands as its description, and GNU `date`'s `FORMAT` takes the text after two spaces in the prose line `FORMAT controls the output.  Interpreted sequences are:`.
 The cnvkit fixture's `targets` gains its description; the samtools fixture's WDL and both fixtures' Nextflow are byte-identical, verified by comparing the generated text before and after, and the changed corpus documents pass `miniwdl check`.
+
+**D29** — an action with `nargs=SUPPRESS` became an input although it takes no value.
+Such an action consumes no command-line strings and never writes its `dest`, as measured on 2026-10-25 on Python 3.13 to 3.15 and read in the `argparse` source of 3.10 to 3.12: `--hush` alone is accepted and does nothing, `--hush v` is rejected, and a positional so declared consumes nothing.
+The reader declared both as value-taking inputs, rendering `~{"--hush " + hush}` and `~{select_first([hidden, ""])}`, so a caller who set either produced a command line the tool rejects.
+`unpack_tasks` now skips them beside `--help` and `--version`, before `_arguments` groups actions by `dest`: an action sharing a `dest` with `--real` would otherwise rename it after its flag and drop its default, which argparse takes from `--real` alone when `--real` is declared first.
+Declared before `--real`, the skipped action's own default, `None` when it declares none, fills the `dest` instead, since argparse takes the first default that is not `SUPPRESS`, and the task, which declares `--real`'s default, does not reproduce that; no parser seen declares this shape.
+`argparse.SUPPRESS` therefore leaves the positional arity rule, where it was a copy of CPython 3.12's own list.
+Both fixtures, the flagship and `mypy.dmypy.client.parser` generate byte-identical WDL and Nextflow, verified by checksum.
 
 ### Working on the vendored parser
 

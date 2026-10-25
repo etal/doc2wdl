@@ -88,12 +88,7 @@ def test_requiredness_of_a_positional_follows_its_arity():
     option keeps whatever its own `required` says.
     """
     parser = argparse.ArgumentParser(prog="tool", add_help=False)
-    zero_or_more = [
-        ("star", "*"),
-        ("maybe", "?"),
-        ("rest", argparse.REMAINDER),
-        ("hidden", argparse.SUPPRESS),
-    ]
+    zero_or_more = [("star", "*"), ("maybe", "?"), ("rest", argparse.REMAINDER)]
     for name, nargs in zero_or_more:
         parser.add_argument(name, nargs=nargs).required = True
     parser.add_argument("one").required = False
@@ -104,8 +99,24 @@ def test_requiredness_of_a_positional_follows_its_arity():
         "star": False,
         "maybe": False,
         "rest": False,
-        "hidden": False,
         "one": True,
         "plus": True,
         "opt": True,
     }
+
+
+def test_an_action_that_consumes_nothing_is_not_an_input():
+    """`nargs=SUPPRESS` takes no value and stores nothing, so it is no input.
+
+    As an input, the option rendered `--hush VALUE`, which the tool rejects.  It
+    also must not count among the actions sharing a `dest`: argparse fills `x`
+    from `--real` alone when, as here, `--real` is declared first, so `--real`
+    keeps the `dest`'s name and its default.
+    """
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("--hush", nargs=argparse.SUPPRESS)
+    parser.add_argument("hidden", nargs=argparse.SUPPRESS)
+    parser.add_argument("--real", dest="x", default="d")
+    parser.add_argument("--ghost", dest="x", nargs=argparse.SUPPRESS)
+    (task,) = argparser.unpack_tasks(parser, "tool")
+    assert [(arg.name, arg.default_value) for arg in task["cli_args"]] == [("x", "d")]
