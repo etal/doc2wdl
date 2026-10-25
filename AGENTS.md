@@ -194,6 +194,7 @@ Switches render faithfully with three deliberate gaps.
 A `required=True` `store_true` declares `Boolean x = false`, so a caller may omit what argparse would demand.
 `nargs=1` is modeled as the scalar it is on the command line, although argparse hands the program a one-item list.
 
+An option whose every occurrence may take more than one value, such as `append` with `nargs=2`, is an array of text in which each element is one occurrence, its values separated by spaces, so `["a b", "c d"]` passes `--pair a b --pair c d`; the element is text whatever `type` declares, so a `type=Path` pair is not localized, and a value that itself contains a space cannot be passed.
 An action with `nargs=SUPPRESS` consumes nothing and is no input, so a `required=True` option of that kind, which argparse still demands, is left out.
 
 ### What the Nextflow writer emits
@@ -204,7 +205,7 @@ Passing `null` as an argument fails the run with "A process input channel evalua
 `lint` also rejects a call that leaves an input out, so the caller passes `''` for an unset value or switch and `[]` for an empty list, as the document's header comment says.
 The template therefore tests a scalar value option with `x != ''`, never with Groovy truth, which drops `--num 0` and `--flag false`; a list is tested by truth, since emptiness is its only false value.
 A switch with no spelling for false is tested by truth, and one with a spelling for false by `x == true` and `x == false`, so that `''` renders neither.
-An array option renders per action as in WDL, and is elided when the list is empty: `append` repeats the flag before each value, by joining the values with the flag as the separator after one leading flag, and `nargs` gives one flag followed by the values joined with spaces.
+An array option renders per action as in WDL, and is elided when the list is empty: `append` repeats the flag before each element, by joining the elements with the flag as the separator after one leading flag, and `nargs` gives one flag followed by the values joined with spaces.
 The `append` form uses no closure, because an explicit parameter can collide with an input of the same name and `lint` warns that the implicit `it` is deprecated.
 Defaults are not declared at all; an elided flag leaves the tool's own default in force.
 With `has_output_file`, the process emits `path "${output_file_name}", emit: output_file, optional: true` beside `stdout emit: stdout`, which is the closest Nextflow comes to WDL's fallback to standard output when no name is given; every process emits `stdout`.
@@ -493,6 +494,20 @@ The reader declared both as value-taking inputs, rendering `~{"--hush " + hush}`
 `unpack_tasks` now skips them beside `--help` and `--version`, before `_arguments` groups actions by `dest`: an action sharing a `dest` with `--real` would otherwise rename it after its flag and drop its default, which argparse takes from `--real` alone when `--real` is declared first.
 Declared before `--real`, the skipped action's own default, `None` when it declares none, fills the `dest` instead, since argparse takes the first default that is not `SUPPRESS`, and the task, which declares `--real`'s default, does not reproduce that; no parser seen declares this shape.
 `argparse.SUPPRESS` therefore leaves the positional arity rule, where it was a copy of CPython 3.12's own list.
+Both fixtures, the flagship and `mypy.dmypy.client.parser` generate byte-identical WDL and Nextflow, verified by checksum.
+
+**D30** — an `append` option taking several values per occurrence lost its grouping.
+The reader modeled `action="append", nargs=2` as a flat array with a flag per value, so `[a, b, c, d]` rendered `--pair a --pair b --pair c --pair d`, which argparse rejects with "unrecognized arguments: b d"; `extend` with `nargs=2` failed the same way, and `append` with `nargs="+"` was accepted but read as one-item lists, `[['a'], ['b']]`.
+mypy's `--shadow-file SOURCE_FILE SHADOW_FILE` and ipykernel's `--env ENV VALUE` have this shape.
+`argparser._is_grouped_option` now selects these options, and an element of such an array is one occurrence, its values written as text separated by spaces, so `["a b", "c d"]` renders `--pair a b --pair c d` in both targets through the existing per-value arm, because placeholders are unquoted; the element is declared text through `type_and_default`, whatever `type` says, and `parameter_meta` gains a line stating the convention.
+`extend` with `nargs="+"` or `"*"` is left as it was, since a flag per value reaches the tool as the same flat list, and so is an `append` positional, which occurs only once on a command line and so is already rendered correctly.
+A nested `Array[Array[T]]` was measured and not adopted.
+WDL 1.1 has no `map` function, so for an input named `pair` the command line needs `flatten(transpose([prefix("--pair ", transpose(pair)[0]), transpose(pair)[1]]))`, generated per arity.
+It must also be guarded, since `transpose(pair)[0]` fails on an empty array, and the whole placeholder, `~{if length(pair) > 0 then sep(" ", flatten(transpose([prefix("--pair ", transpose(pair)[0]), transpose(pair)[1]]))) else ""}`, is 125 characters.
+It cannot express `nargs="+"`, since `transpose` rejects ragged rows.
+What the text element loses is the element type: a `type=int` pair is `Array[String]` and checked only by the tool, and a `type=Path` pair is not localized by the engine.
+A value that itself contains a space cannot be passed either, since the placeholders are unquoted and the shell splits it, as it splits every other value.
+On 2026-10-25 the rendered command line parsed back to `[[1, 2], [3, 4]]` under the declaring parser, and `nextflow run` rendered the same line; `tests/test_generate.py` asserts both.
 Both fixtures, the flagship and `mypy.dmypy.client.parser` generate byte-identical WDL and Nextflow, verified by checksum.
 
 ### Working on the vendored parser

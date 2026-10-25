@@ -60,11 +60,13 @@ class Argument:
     empty, as for `store_false`, which has only a spelling for false.  A switch
     that has a name for both states renders one of them whenever its input is set.
 
-    `flag_per_value` marks an array option whose flag precedes each value, as
+    `flag_per_value` marks an array option whose flag precedes each element, as
     `--tag a --tag b` for argparse's `append`, rather than the whole list, as
-    `--tags a b` for `nargs="+"`.  The wrong form still type checks: a `nargs`
-    option then keeps only its last value, and an `append` option receives the
-    rest of its values as stray positionals.
+    `--tags a b` for `nargs="+"`.  An element is one occurrence's value, or its
+    values separated by spaces where one occurrence takes several, as for
+    `append` with `nargs=2`.  The wrong form still type checks: a `nargs` option
+    then keeps only its last value, and an `append` option receives the rest of
+    its values as stray positionals.
     """
 
     name: str

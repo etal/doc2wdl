@@ -5,6 +5,7 @@ import argparse
 import pytest
 
 from doc2wrapper import argparser
+from doc2wrapper.tasktree import ValueType
 
 
 def test_version_is_not_an_input():
@@ -120,3 +121,35 @@ def test_an_action_that_consumes_nothing_is_not_an_input():
     parser.add_argument("--ghost", dest="x", nargs=argparse.SUPPRESS)
     (task,) = argparser.unpack_tasks(parser, "tool")
     assert [(arg.name, arg.default_value) for arg in task["cli_args"]] == [("x", "d")]
+
+
+@pytest.mark.parametrize(
+    "name, kwargs, grouped",
+    [
+        ("--num", {"action": "append", "nargs": 2}, True),
+        ("--num", {"action": "append", "nargs": "+"}, True),
+        ("--num", {"action": "extend", "nargs": 2}, True),
+        ("--num", {"action": "extend", "nargs": "+"}, False),
+        ("--num", {"action": "append", "nargs": 1}, False),
+        ("--num", {"action": "append"}, False),
+        ("num", {"action": "append", "nargs": "+"}, False),
+    ],
+)
+def test_an_element_is_one_occurrence_of_a_flag(name, kwargs, grouped):
+    """Where one occurrence takes several values, an element holds them as text.
+
+    `extend` with `nargs="+"` builds one flat list whether its values follow one
+    flag or each their own, so it keeps its declared type, and a positional
+    occurs only once, so its values already form one group.
+    """
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument(name, type=int, help="Numbers.", **kwargs)
+    (task,) = argparser.unpack_tasks(parser, "tool")
+    (arg,) = task["cli_args"]
+    assert arg.is_array and arg.flag_per_value
+    if grouped:
+        assert arg.value_type == ValueType.TEXT
+        note = f"Each element is one occurrence of {name}: "
+        assert arg.doc.startswith(f"Numbers.\n{note}")
+    else:
+        assert (arg.value_type, arg.doc) == (ValueType.INTEGER, "Numbers.")

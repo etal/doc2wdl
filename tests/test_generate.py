@@ -440,6 +440,7 @@ def test_nextflow_command_line_follows_the_inputs(check_nextflow, nextflow_comma
     parser.add_argument("--color", action=argparse.BooleanOptionalAction)
     parser.add_argument("--no-check", action="store_false", dest="check")
     parser.add_argument("-v", action="append")
+    parser.add_argument("--window", action="append", nargs=2, type=int)
     parser.add_argument("--files", nargs="+")
     parser.add_argument("--pair", nargs=2, required=True)
     parser.add_argument("--req", required=True)
@@ -448,14 +449,25 @@ def test_nextflow_command_line_follows_the_inputs(check_nextflow, nextflow_comma
     check_nextflow(nextflow)
     assert nextflow_commands(
         nextflow,
-        [[], "", "", "", [], [], ["p", "q"], "r", ""],
-        [["x", "y"], 0, False, False, ["a", "b"], ["f", "g"], ["p", "q"], "s", "t"],
-        [["x"], 3, True, True, ["a"], ["f"], ["p", "q"], "r", ""],
+        [[], "", "", "", [], [], [], ["p", "q"], "r", ""],
+        [
+            ["x", "y"],
+            0,
+            False,
+            False,
+            ["a", "b"],
+            ["1 2", "3 4"],
+            ["f", "g"],
+            ["p", "q"],
+            "s",
+            "t",
+        ],
+        [["x"], 3, True, True, ["a"], ["5 6"], ["f"], ["p", "q"], "r", ""],
     ) == {
         "tool --pair p q --req r",
-        "tool x y --num 0 --no-color --no-check -v a -v b --files f g --pair p q"
-        " --req s --task t",
-        "tool x --num 3 --color -v a --files f --pair p q --req r",
+        "tool x y --num 0 --no-color --no-check -v a -v b --window 1 2 --window 3 4"
+        " --files f g --pair p q --req s --task t",
+        "tool x --num 3 --color -v a --window 5 6 --files f --pair p q --req r",
     }
 
 
@@ -488,18 +500,22 @@ def test_multi_value_arguments_are_arrays_spelled_per_action(check_wdl, wdl_comm
 
     Exchanging the two still type checks.  The first form given to a `nargs`
     option keeps only the last value, and the second given to `append` passes the
-    rest as stray positionals.
+    rest as stray positionals.  `append` with `nargs=2` repeats its flag per pair,
+    so an element holds one pair as text whatever `type` declares, and only the
+    parser that declared the option can confirm the grouping.
     """
     parser = argparse.ArgumentParser(prog="tool", add_help=False)
     parser.add_argument("inputs", nargs="*")
     parser.add_argument("--tag", action="append")
     parser.add_argument("--files", nargs="+")
     parser.add_argument("--pair", nargs=2, required=True)
+    parser.add_argument("--window", action="append", nargs=2, type=int)
     wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
     check_wdl(wdl)
     assert "Array[File] inputs = []\n" in wdl
     assert "Array[String] tag = []\n" in wdl
     assert "Array[String]+ pair\n" in wdl
+    assert "Array[String] window = []\n" in wdl
     assert wdl_command(wdl, pair=["p", "q"]) == "tool --pair p q"
     assert (
         wdl_command(
@@ -507,6 +523,9 @@ def test_multi_value_arguments_are_arrays_spelled_per_action(check_wdl, wdl_comm
         )
         == "tool x y --tag a --tag b --files f g --pair p"
     )
+    command = wdl_command(wdl, pair=["p", "q"], window=["1 2", "3 4"])
+    assert command == "tool --pair p q --window 1 2 --window 3 4"
+    assert parser.parse_args(command.split()[1:]).window == [[1, 2], [3, 4]]
 
 
 def test_python_defaults_are_spelled_as_wdl_literals(check_wdl, wdl_command):

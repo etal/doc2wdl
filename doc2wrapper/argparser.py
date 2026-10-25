@@ -183,7 +183,7 @@ def _argument(action, name):
         )
     # `append` and `extend` add to their default rather than replace it, so the
     # values the input supplies start empty; spelling the default as well would
-    # pass it twice.  `extend` subclasses `append`, and a flag per value suits it.
+    # pass it twice.  `extend` subclasses `append`.
     appends = isinstance(action, argparse._AppendAction)
     if appends:
         default = None
@@ -198,30 +198,71 @@ def _argument(action, name):
     )
     # Arity decides, not the type of `dest`: `nargs=1` takes one value into a
     # one-item list and is modeled as the scalar it is on the command line.
-    is_array = (
-        appends
-        or action.nargs in ("*", "+", argparse.REMAINDER)
-        or (isinstance(action.nargs, int) and action.nargs > 1)
-    )
-    # `FileType` opens the path it is given, so it declares a file exactly as
-    # `pathlib.Path` does, and the model has one name for both.
+    is_array = appends or _takes_several_values(action.nargs)
+    # The flag is rendered once per element, so where one occurrence takes several
+    # values the element must hold them all, written as text separated by spaces;
+    # the element is then text whatever `type` declares.
+    grouped = _is_grouped_option(action)
+    if grouped:
+        declared = str
+    elif isinstance(action.type, argparse.FileType):
+        # `FileType` opens the path it is given, so it declares a file exactly as
+        # `pathlib.Path` does, and the model has one name for both.
+        declared = Path
+    else:
+        declared = action.type
     value_type, default = type_and_default(
-        declared=Path if isinstance(action.type, argparse.FileType) else action.type,
+        declared=declared,
         default=default,
         is_array=is_array,
         is_positional=not is_option,
     )
+    flag = action.option_strings[-1] if is_option else ""
+    doc = action.help or ""
+    if grouped:
+        values = (
+            f"{action.nargs} values" if isinstance(action.nargs, int) else "its values"
+        )
+        note = (
+            f"Each element is one occurrence of {flag}: {values}, separated by spaces."
+        )
+        doc = "\n".join(filter(None, (doc, note)))
     return Argument(
         name=name,
         value_type=value_type,
         is_array=is_array,
         is_required=is_required,
         default_value=default,
-        option_flag=action.option_strings[-1] if is_option else "",
+        option_flag=flag,
         option_has_value=is_option,
         flag_per_value=appends,
-        doc=action.help or "",
+        doc=doc,
     )
+
+
+def _takes_several_values(nargs):
+    """May one occurrence of an action take more than one value?"""
+    return nargs in ("*", "+", argparse.REMAINDER) or (
+        isinstance(nargs, int) and nargs > 1
+    )
+
+
+def _is_grouped_option(action):
+    """Does one occurrence of this repeatable option take several values?
+
+    `append` with `nargs=2` reads `--pair a b --pair c d` as two pairs and rejects
+    `--pair a --pair b`, and with `nargs="+"` reads `--pair a --pair b` as two
+    one-item lists.  `extend` with `nargs="+"` or `"*"` builds one flat list either
+    way, so a flag per value already passes it exactly; with a fixed `nargs` above
+    one it still demands that many values per occurrence.  `REMAINDER` takes the
+    rest of the command line as one element, so only one occurrence of it is
+    expressible.  A positional occurs once, so its values are already one group.
+    """
+    if not action.option_strings or not isinstance(action, argparse._AppendAction):
+        return False
+    if isinstance(action, argparse._ExtendAction) and action.nargs in ("+", "*"):
+        return False
+    return _takes_several_values(action.nargs)
 
 
 def _switch(action, default):
