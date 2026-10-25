@@ -449,24 +449,11 @@ def _without_value_brackets(formal, options):
     brackets; any other group after such an option stays as written.
     """
     tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
-    # A copy, so that the caller's list, which `parse_pattern` then appends to,
-    # receives no option from this scan.  The scan registers long options only, so
-    # sharing the list would place every long option the synopsis alone names ahead
-    # of every such short option, rather than in the order the synopsis gives.
-    known = options[:]
     removed = set()
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        index += 1
-        if _value_taker(token, known) is None:
-            continue
-        closing = _placeholder_group(tokens, index)
+    for _option, value in _valued_options(tokens, options):
+        closing = _placeholder_group(tokens, value)
         if closing is not None:
-            removed.update((index, closing))
-            index += 1
-        # The token the option reads as its value is never an option itself.
-        index += 1
+            removed.update((value, closing))
     return " ".join(token for i, token in enumerate(tokens) if i not in removed)
 
 
@@ -486,28 +473,38 @@ def _without_value_repeats(formal, options):
     parsing.  The text is returned unchanged where no group is removed.
     """
     tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
-    # A copy, for the reason `_without_value_brackets` gives.
-    known = options[:]
     removed = set()
+    for option, value in _valued_options(tokens, options):
+        placeholder = tokens[value]
+        # An option `_value_taker` registered from the synopsis has no entry and so
+        # no `repeated`.
+        if placeholder != getattr(option, "repeated", None):
+            continue
+        if tokens[value + 1 : value + 5] == ["[", placeholder, "...", "]"]:
+            removed.update(range(value + 1, value + 5))
+    if not removed:
+        return formal
+    return " ".join(token for i, token in enumerate(tokens) if i not in removed)
+
+
+def _valued_options(tokens, options):
+    """Yield each option among `tokens` that takes a value, and its value's index.
+
+    The scan runs on a copy of `options`, so that the caller's list, which
+    `parse_pattern` then appends to, receives no option from it.  The scan registers
+    long options only, so sharing the list would place every long option the
+    synopsis alone names ahead of every such short option, rather than in the order
+    the synopsis gives.  The token an option reads as its value is never an option
+    itself, so the scan passes over it.
+    """
+    known = options[:]
     index = 0
     while index < len(tokens) - 1:
         option = _value_taker(tokens[index], known)
         index += 1
-        if option is None:
-            continue
-        value = tokens[index]
-        group = tokens[index + 1 : index + 5]
-        # An option `_value_taker` registered from the synopsis has no entry and so
-        # no `repeated`.
-        if group == ["[", value, "...", "]"] and value == getattr(
-            option, "repeated", None
-        ):
-            removed.update(range(index + 1, index + 5))
-            index += 4
-        index += 1
-    if not removed:
-        return formal
-    return " ".join(token for i, token in enumerate(tokens) if i not in removed)
+        if option is not None:
+            yield option, index
+            index += 1
 
 
 def _value_taker(token, known):
