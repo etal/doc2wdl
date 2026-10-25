@@ -22,4 +22,4 @@ bedtools-intersect	parsed	stderr	bedtools 2.31.1	bedtools intersect --help	the o
 htsfile	parsed	stdout	htslib 1.23.1	htsfile --help	options block follows the synopsis with no blank line, and its prose is read as positionals
 ls	parsed	stderr	macOS 26.6.2	/bin/ls --help	no options block, so the value of -D is read as a positional
 jq	parsed	stdout	jq 1.7.1-apple	jq --help	<jq filter> split at its space
-cnvkit-import-rna	parsed	stdout	CNVkit 0.9.15.dev0	cnvkit.py import-rna -h	the repeat in -n NORMAL [NORMAL ...] is read as a positional; a wrapped line opening with --normal is prose, and its [Default: polish] is --normalize-method's
+cnvkit-import-rna	parsed	stdout	CNVkit 0.9.15.dev0	cnvkit.py import-rna -h	FILES [FILES ...] read as two positionals, while -n NORMAL [NORMAL ...] is one option taking a list; a wrapped line opening with --normal is prose, and its [Default: polish] is --normalize-method's

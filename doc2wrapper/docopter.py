@@ -49,6 +49,10 @@ _WRAPPED_WORD = re.compile(
 # verbatim, so that splitting the padded text yields the tokens it reads.
 _PATTERN_SYMBOL = re.compile(r"([\[\]\(\)\|]|\.\.\.)")
 
+# A placeholder followed by a repetition of itself, as argparse writes the value of
+# an `nargs="+"` option, `NORMAL [NORMAL ...]`, in an options-block entry's flags.
+_REPEATED_VALUE = re.compile(r"(?<!\S)([^\s\[\]-]\S*) \[\1 \.\.\.\]")
+
 # A bracketed optional part inside a flag's name, as in `--region[s]-file`, and
 # what a flag is once its optional parts are removed; `_passable_flag` reads them.
 _OPTIONAL_PART = re.compile(r"\[[A-Za-z0-9-]+\](?=[\w-])")
@@ -117,6 +121,8 @@ def parse(doc):
     #               # default value if given in help text, or None if not given
     #               # / there isn't one.
     #   description # set by `_documented_options`, not by docopt
+    #   repeated    # likewise: the placeholder an entry repeats, as in
+    #               # `-n NORMAL [NORMAL ...]`, or None
     options = _documented_options(doc)
     documented = len(options)
     cli_prefix, positionals = _read_command_line(printable, usage, options)
@@ -124,6 +130,7 @@ def parse(doc):
     # have no options-block entry and so no description.
     for option in options[documented:]:
         option.description = ""
+        option.repeated = None
     return usage, cli_prefix, positionals, options
 
 
@@ -188,7 +195,11 @@ def transform(usage, cli_prefix, positionals, options):
             continue
         if option_flag in _SKIPPED_OPTIONS and opt.argcount == 0:
             continue
-        if option_flag in _OUTPUT_OPTIONS and opt.argcount == 1:
+        # A repeated placeholder is argparse's `nargs="+"`: one flag, then the list.
+        is_array = opt.repeated is not None
+        # The templates' output sections name one file, so an output option that
+        # takes a list is an ordinary input.
+        if option_flag in _OUTPUT_OPTIONS and opt.argcount == 1 and not is_array:
             # This variable will also be used in the WDL task's `output` section
             name = OUTPUT_FILE_NAME
             has_output_file = True
@@ -204,11 +215,14 @@ def transform(usage, cli_prefix, positionals, options):
             value_type, default = type_and_default(declared=bool, default=opt.value)
         else:
             # It is the text of the `[default: ...]` literal, or None for none.
-            value_type, default = type_and_default(default=literal_default(opt.value))
+            value_type, default = type_and_default(
+                default=literal_default(opt.value), is_array=is_array
+            )
         cli_args.append(
             Argument(
                 name=name,
                 value_type=value_type,
+                is_array=is_array,
                 default_value=default,
                 option_flag=option_flag,
                 option_has_value=(opt.argcount == 1),
@@ -299,12 +313,15 @@ def _read_command_line(printable, usage, options):
     on a copy of the options-block entries, and `options` takes the options it
     appends only when it succeeds, so a usage line that parses neither way leaves
     `options` exactly as the first attempt did, and the warning reports that
-    attempt's error.  A usage line that parses as written is never rewritten.  With
-    no tree to confirm them, the command words are those of the text alone.
+    attempt's error.  A usage line that parses as written is not rewritten, except
+    that the repetition `_without_value_repeats` describes is removed beforehand.
+    With no tree to confirm them, the command words are those of the text alone.
     """
     words = _command_words(usage)
     entries = options[:]
-    formal = docopt.formal_usage(_CONTINUATION.sub("", printable))
+    formal = _without_value_repeats(
+        docopt.formal_usage(_CONTINUATION.sub("", printable)), options
+    )
     try:
         pattern = docopt.parse_pattern(formal, options)
     except docopt.DocoptLanguageError as why:
@@ -401,7 +418,7 @@ def _without_value_brackets(formal, options):
     while index < len(tokens):
         token = tokens[index]
         index += 1
-        if not _takes_next_token(token, known):
+        if _value_taker(token, known) is None:
             continue
         closing = _placeholder_group(tokens, index)
         if closing is not None:
@@ -412,13 +429,54 @@ def _without_value_brackets(formal, options):
     return " ".join(token for i, token in enumerate(tokens) if i not in removed)
 
 
-def _takes_next_token(token, known):
-    """Would `parse_long` or `parse_shorts` read the next token as this one's value?
+def _without_value_repeats(formal, options):
+    """Remove the repetition after an option's value: ``-n N [N ...]`` becomes ``-n N``.
 
-    The rules are theirs as `parse_pattern` runs them: a long option takes the next
-    token when the token carries no ``=`` and the option of exactly its spelling
-    takes a value; a stack of short options takes it when the first of its letters
-    that takes a value is its last letter, since any letters after that one are the
+    argparse writes an option with ``nargs="+"`` as ``-n NORMAL [NORMAL ...]``, in
+    the synopsis and in the options block alike.  The option reads only ``NORMAL``
+    as its value, so ``[NORMAL ...]`` would be an optional list of positionals.
+    The group is removed only where the option's options-block entry repeats the
+    same placeholder, as its ``repeated`` records, because BSD find writes
+    ``-f path [path ...]`` for an option followed by a list of positionals.
+
+    Unlike `_without_value_brackets`, this runs before the first reading, since
+    the synopsis parses as written.  Removing a whole bracketed group leaves every
+    other bracket matched as it was, so no synopsis that parses as written stops
+    parsing.  The text is returned unchanged where no group is removed.
+    """
+    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    # A copy, for the reason `_without_value_brackets` gives.
+    known = options[:]
+    removed = set()
+    index = 0
+    while index < len(tokens) - 1:
+        option = _value_taker(tokens[index], known)
+        index += 1
+        if option is None:
+            continue
+        value = tokens[index]
+        group = tokens[index + 1 : index + 5]
+        # An option `_value_taker` registered from the synopsis has no entry and so
+        # no `repeated`.
+        if group == ["[", value, "...", "]"] and value == getattr(
+            option, "repeated", None
+        ):
+            removed.update(range(index + 1, index + 5))
+            index += 4
+        index += 1
+    if not removed:
+        return formal
+    return " ".join(token for i, token in enumerate(tokens) if i not in removed)
+
+
+def _value_taker(token, known):
+    """The option `parse_long` or `parse_shorts` gives the next token as its value.
+
+    None where neither function would give the next token to an option.  The rules
+    are theirs as `parse_pattern` runs them: a long option takes the next token
+    when the token carries no ``=`` and the option of exactly its spelling takes a
+    value; a stack of short options takes it when the first of its letters that
+    takes a value is its last letter, since any letters after that one are the
     value.  `parse_long` registers a long option it does not know with the argument
     count its token shows, which decides how a later occurrence reads, so this
     function appends it to `known` in the same way.  `parse_shorts` registers an
@@ -432,14 +490,17 @@ def _takes_next_token(token, known):
         similar = [option for option in known if option.long == long]
         if not similar:
             known.append(docopt.Option(None, long, 1 if eq == "=" else 0))
-        return eq != "=" and any(option.argcount for option in similar)
+        if eq == "=":
+            return None
+        return next((option for option in similar if option.argcount), None)
     if token.startswith("-") and token not in ("-", "--"):
         letters = token.lstrip("-")
         for position, letter in enumerate(letters, 1):
             short = "-" + letter
-            if any(option.argcount for option in known if option.short == short):
-                return position == len(letters)
-    return False
+            for option in known:
+                if option.short == short and option.argcount:
+                    return option if position == len(letters) else None
+    return None
 
 
 def _placeholder_group(tokens, opening):
@@ -466,12 +527,16 @@ def _documented_options(doc):
     `Option.parse` is given the text upstream's `parse_defaults` gave it, the option
     line from its first flag followed by the entry's later lines, joined by line
     breaks, so the flags, the argument count and a ``[default: ...]`` are read as
-    upstream reads them.  Only where an entry starts and ends differs.
+    upstream reads them.  Only where an entry starts and ends differs.  Each option
+    also records the placeholder its flags repeat, as argparse writes the value of
+    an ``nargs="+"`` option as ``NORMAL [NORMAL ...]``, or None.
     """
     options = []
     for entry, description in _option_entries(doc):
         option = docopt.Option.parse("\n".join(entry))
         option.description = _joined(description)
+        repeat = _REPEATED_VALUE.search(entry[0].partition("  ")[0])
+        option.repeated = repeat.group(1) if repeat else None
         options.append(option)
     return options
 

@@ -178,7 +178,7 @@ Because the corpus is not a sample, its counts describe the corpus and not how o
   In `samtools stats` the options block follows the synopsis with no blank line, so `printable_usage` reads it as usage.
 - **Parsed: 9.** Only `wgsim` and `cnvkit.py batch` yield exactly their positionals.
   The rest run to completion with extra positionals: summary placeholders such as `[OPTIONS]` and `...` (`tabix`), option values the reader cannot attribute to an option (`ls`, which has no options block, and `bedtools intersect`, whose options block omits the `-a` and `-b` its synopsis names), an options block's prose (`htsfile`, swallowed as `samtools stats` is but without desyncing), or a placeholder split at its space (`jq`'s `<jq filter>`).
-  argparse's `X [X ...]` for `nargs="+"` becomes two positionals, one required and one an optional array (`miniwdl check`), and after an option, as in `-n NORMAL [NORMAL ...]`, the repetition becomes a positional (`cnvkit.py import-rna`).
+  argparse's `X [X ...]` for a positional with `nargs="+"` becomes two positionals, one required and one an optional array (`miniwdl check`, `cnvkit.py import-rna`).
 
 The reliable shape is a single blank-line-terminated synopsis naming at most one fixed subcommand, written directly after the program name, where no flag's arity differs between the options block and the synopsis and no wrapped line of the synopsis begins with a flag.
 argparse-generated help departs from it by wrapping the synopsis at `COLUMNS`, so whether a synopsis line opens with a flag depends on the width: `python3 -m zipfile` degrades at 80 columns and parses at 120.
@@ -359,7 +359,8 @@ Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24
 Those three also gain 39 option declarations named only in what is read as the synopsis, such as `--just-print,` with its comma; no option-block entry or description changes in any of the six.
 Both fixtures generate byte-identical WDL and Nextflow, verified by checksum, and the corpus's `cnvkit.py batch` gains `Array[File] sample_fnames` and passes `miniwdl check` and `nextflow lint`.
 The option keeps its argument count of 1, so the generated input passes `--processes` with a value or not at all, and cannot pass the bare flag, which cnvkit reads as "use every CPU".
-Not covered: `nargs="+"`, written `-n NORMAL [NORMAL ...]`, whose group follows the value rather than the option and still becomes a positional, and an optional prefix of a value, such as curl's `--proxy [protocol://]host`, which the rule would misread in a synopsis that otherwise parses; no captured synopsis does.
+Not covered: an optional prefix of a value, such as curl's `--proxy [protocol://]host`, which the rule would misread in a synopsis that otherwise parses; no captured synopsis does.
+`nargs="+"`, written `-n NORMAL [NORMAL ...]`, whose group follows the value rather than the option, is D22's.
 
 **D19** — the command words were read from the head of the first synopsis line and then removed from the pattern tree wherever their names occurred.
 An alternative naming another subcommand therefore kept its word: `Usage: git log <a>` followed by `git show <b>` read `show` as a spelling of `<a>` and moved `<b>` into a slot of its own, with no warning.
@@ -401,6 +402,19 @@ Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24
 35 records change, none in its CLI prefix or positionals.
 A flag rewritten to the spelling of another option, as git-commit's `--[no-]dry-run` meets the `--dry-run` its synopsis names, gives two inputs passing one flag, which the writer's unique names do not prevent.
 The cnvkit fixture generates byte-identical WDL and Nextflow; the samtools fixture changes only in its three bracketed options, whose inputs are now `region_file`, `target_file` and `excl_flags`.
+
+**D22** — argparse's notation for an option taking one or more values put a positional in the synopsis.
+argparse writes an option with `nargs="+"` as `-n NORMAL [NORMAL ...]`, in the synopsis and in the options block alike, and the option reads only `NORMAL` as its value, so `[NORMAL ...]` became an optional list of positionals, as it did in `cnvkit.py import-rna`.
+The synopsis parses as written, so D18's second reading never reaches it.
+`docopter._documented_options` now records, as an option's `repeated`, the placeholder its entry's flags repeat in this form, and `_without_value_repeats` removes the group `[ NORMAL ... ]` that directly follows such an option and the value it reads, when the group repeats that value and the option's `repeated` names it.
+The entry is required as evidence because BSD find writes `-f path [path ...]` for an option followed by a list of operands; find prints no options block, so its synopsis is unchanged.
+The removal runs before the first reading, which D18 avoided for its own rewrite because removing the brackets around a value can leave other brackets unmatched.
+Removing a whole group cannot: of the 5,380,839 patterns of one to seven tokens drawn from `[ ] ( ) | ... -p -q A`, with `-p` repeating `A`, it applies to 18, of which 9 fail to parse both before and after, and the other 9 parse both times and differ only in the removed list.
+An option whose entry repeats its placeholder is an array input with one flag before its values, as the argparse reader models `nargs="+"`, so `--normal` becomes `Array[String] normal = []`, passed as `--normal a b`; pylint's `--help-msg`, which its synopsis does not name, becomes one too.
+An `--output` option of that form is such an input rather than the declared output file, because the templates' output sections name one file.
+Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24, three records change: both captures of `cnvkit.py import-rna` lose the positional `NORMAL`, and pylint's `--help-msg` becomes an array.
+No outcome class or CLI prefix moves, and the corpus's `cnvkit.py import-rna` passes `miniwdl check` and `nextflow lint`.
+Both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
 
 ### Working on the vendored parser
 

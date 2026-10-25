@@ -279,6 +279,42 @@ def test_a_group_that_is_not_one_placeholder_keeps_its_brackets(group, capsys):
     assert "unmatched '('" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("retried", ["", " [-p [P]]"])
+@pytest.mark.parametrize(
+    "spelled", ["-n N [N ...]", "--normal N [N ...]", "-vn N [N ...]"]
+)
+def test_a_repeated_option_value_is_the_options_list(spelled, retried):
+    """argparse writes `nargs="+"` as `-n N [N ...]`; the repetition is the option's.
+
+    Without `[-p [P]]`, the synopsis parses as written, so no retry reaches the
+    group.  The option's entry, which repeats its placeholder too, marks the option
+    a list.
+    """
+    doc = (
+        f"usage: tool [-h] [-v] [{spelled}]{retried} <in>\n\noptions:\n"
+        "  -v               Be loud.\n"
+        "  -n, --normal N [N ...]\n                   Normal samples.\n"
+        "  -p [P]           Processes.\n"
+    )
+    task = docopter.transform(*docopter.parse(doc))
+    args = {arg.name: arg for arg in task["cli_args"]}
+    assert list(args) == ["in", "v", "normal", "p"]
+    assert args["normal"].is_array
+    assert not args["normal"].flag_per_value
+    assert not args["p"].is_array
+
+
+@pytest.mark.parametrize("entry", ["  -f path  Root.\n", ""])
+def test_a_list_after_an_option_value_stays_positional_without_its_entry(entry):
+    """BSD find writes `-f path [path ...]`, where the list is the operands'."""
+    doc = f"usage: find -f path [path ...] <expr>\n\noptions:\n{entry}"
+    _usage, _prefix, positionals, _options = docopter.parse(doc)
+    assert [(p.spellings, p.is_array) for p in positionals][-2:] == [
+        (["path"], True),
+        (["<expr>"], False),
+    ]
+
+
 def test_help_and_version_options_are_not_task_inputs(help_text):
     """These describe the tool's own interface; WDL states them in meta{} instead."""
     task = docopter.transform(*docopter.parse(help_text("cnvkit-antitarget")))
@@ -290,6 +326,20 @@ def test_output_option_becomes_the_declared_output_file(help_text):
     task = docopter.transform(*docopter.parse(help_text("cnvkit-antitarget")))
     assert task["has_output_file"]
     assert docopter.OUTPUT_FILE_NAME in [arg.name for arg in task["cli_args"]]
+
+
+def test_an_output_option_taking_a_list_is_an_ordinary_input():
+    """The output sections name one file, which a list of names cannot be."""
+    doc = (
+        "usage: prog [--output OUT [OUT ...]] FILE\n\noptions:\n"
+        "  --output OUT [OUT ...]  Outputs.\n"
+    )
+    task = docopter.transform(*docopter.parse(doc))
+    assert not task["has_output_file"]
+    assert [(arg.name, arg.is_array) for arg in task["cli_args"]] == [
+        ("FILE", False),
+        ("output", True),
+    ]
 
 
 HOSTILE_TOKENS = ["<in.bam>", "--min-size", "-1", "<a/b>", "--", "FILE(S)", "-#"]
