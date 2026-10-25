@@ -99,12 +99,14 @@ class Positional:
     A usage line may offer alternatives for the same slot, as samtools does with
     ``<in.bam>|<in.sam>|<in.cram>``.  That is one input accepting three file
     formats, not three inputs, so the spellings are collected here and the first
-    one names the generated input.
+    one names the generated input.  The description is the text of the
+    positional's own entry in the help text, or ``""`` where it has none.
     """
 
     spellings: list[str]
     is_required: bool = True
     is_array: bool = False
+    description: str = ""
 
 
 def parse(doc):
@@ -117,9 +119,9 @@ def parse(doc):
         A tuple of the usage text, which is the synopsis `_synopsis` finds with the
         leading ``usage:`` marker removed; the CLI prefix, i.e. the program name and
         the command words after it that name the command the task invokes; a list
-        of `Positional`; and a list of docopt ``Option``, each carrying a
-        ``description``: its text from the options block, or ``""`` where none was
-        written.
+        of `Positional`, each with the description `_positional_descriptions`
+        finds; and a list of docopt ``Option``, each carrying a ``description``: its
+        text from the options block, or ``""`` where none was written.
 
     Raises:
         UsageNotFound: the help text has no usage section, or has several.  There
@@ -162,6 +164,7 @@ def parse(doc):
         option.description = ""
         option.repeated = None
         option.declared_type = None
+    _positional_descriptions(doc, synopsis, positionals)
     return usage, cli_prefix, positionals, options
 
 
@@ -258,11 +261,7 @@ def transform(usage, cli_prefix, positionals, options):
             value_type=positional_type,
             is_array=pos.is_array,
             is_required=pos.is_required,
-            doc=(
-                "Also accepts: " + ", ".join(pos.spellings[1:])
-                if len(pos.spellings) > 1
-                else ""
-            ),
+            doc=_positional_doc(pos),
         )
         for pos in positionals
     ]
@@ -337,6 +336,19 @@ def transform(usage, cli_prefix, positionals, options):
         cli_args=cli_args,
         has_output_file=has_output_file,
     )
+
+
+def _positional_doc(position):
+    """A positional's description, then the other spellings it accepts, if any.
+
+    The two are separate lines, as the argparse reader separates the two flags'
+    texts of a paired switch, so that a description written without a full stop
+    does not run into the list.
+    """
+    parts = [position.description] if position.description else []
+    if len(position.spellings) > 1:
+        parts.append("Also accepts: " + ", ".join(position.spellings[1:]))
+    return "\n".join(parts)
 
 
 def _takes_value(option):
@@ -709,13 +721,14 @@ def _value_kind(lines):
     return None
 
 
-def _option_entries(doc, synopsis):
+def _option_entries(doc, synopsis, named=frozenset()):
     """Yield each options-block entry's lines and the lines of its description.
 
-    An entry starts at a line opening with a flag, never on the document's first
-    line nor on a line of the synopsis, whose line numbers `synopsis` holds, and its
-    first line is the option line from that flag on.  Upstream's
-    `parse_defaults` started an option at every such line, so a description whose
+    An entry starts at a line opening with a flag, or with a positional's name, as
+    the last paragraph describes, never on the document's first line nor on a line
+    of the synopsis, whose line numbers `synopsis` holds, and its first line is
+    that line from the flag or name on.  Upstream's `parse_defaults` started an
+    option at every line opening with a flag, so a description whose
     wrapped line begins with a flag declared an option of its own and could take
     the enclosing option's ``[default: ...]``.  Here a line opening with a flag
     starts an entry, and one opening with a ``<name>`` ends the current entry, only
@@ -739,15 +752,21 @@ def _option_entries(doc, synopsis):
     Tabs are expanded first, as `_expanded` describes, since help text such as
     bedtools' indents its options block with a tab and separates each flag from
     its description with another.
+
+    `named` holds identifiers of positional arguments, as `_identifier` makes them.
+    A line whose first word has one of them starts an entry too, by the same rules
+    as a line opening with a flag, as argparse lists ``targets`` under "positional
+    arguments:"; `_positional_descriptions` reads those entries.
     """
     entry, lines, describing, entry_indent, column = None, [], False, 0, None
     for number, line in enumerate(_expanded(doc).split("\n")):
         head = line.lstrip(" ")
         indent = len(line) - len(head)
+        names = named and _names_positional(head.split(" ", 1)[0], named)
         starts = (
             number > 0
             and number not in synopsis
-            and _ENTRY.match(head) is not None
+            and (names or _ENTRY.match(head) is not None)
             and (column is None or indent < column)
         )
         if entry is not None:
@@ -762,7 +781,7 @@ def _option_entries(doc, synopsis):
                 continue
             yield entry, lines
             entry = None
-        if starts and head[0] == "-":
+        if starts and (names or head[0] == "-"):
             entry, lines, describing, entry_indent = [head], [], True, indent
             description = head.partition("  ")[2].lstrip()
             if description:
@@ -771,6 +790,38 @@ def _option_entries(doc, synopsis):
                     column = len(line) - len(description)
     if entry is not None:
         yield entry, lines
+
+
+def _names_positional(word, named):
+    """Is this word the spelling of a positional argument with one of these names?
+
+    A word with no letter or digit, such as ``-`` for standard input, names none,
+    since every such word would make the same identifier.
+    """
+    return any(c.isalnum() for c in word) and _identifier(word) in named
+
+
+def _positional_descriptions(doc, synopsis, positionals):
+    """Give each positional the description its own entry in the help text writes.
+
+    argparse writes ``  targets               BED or interval file ...`` under
+    "positional arguments:", and other tools write ``<PATTERN>`` or ``FILE``
+    entries alongside their options.  The entries are read by `_option_entries`, a
+    second time, now that the positionals' names are known, and the first entry
+    with a description that names a positional, by any of its spellings, describes
+    it.  The options this reading finds are discarded, so the option set is the
+    first reading's.
+    """
+    slots = {}
+    for position in positionals:
+        for spelling in position.spellings:
+            slots.setdefault(_identifier(spelling), []).append(position)
+    for entry, description in _option_entries(doc, synopsis, frozenset(slots)):
+        if entry[0].startswith("-"):
+            continue
+        for position in slots[_identifier(entry[0].split(" ", 1)[0])]:
+            if not position.description:
+                position.description = _joined(description)
 
 
 def _expanded(text):

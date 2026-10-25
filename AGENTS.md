@@ -473,6 +473,18 @@ The rest of the 131 are still switches: their descriptions name no type, as `-g`
 Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24, four records change, `bedtools genomecov`, `bedtools merge` and both captures of `bedtools intersect`, and nothing outside bedtools; no CLI prefix, positional or warning moves.
 Both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after, and the corpus's `bedtools intersect` passes `miniwdl check` and `nextflow lint`.
 
+**D28** — a help-text positional had no description.
+argparse lists each positional with its help under "positional arguments:", as in `  targets               BED or interval file ...`, and other tools write `<PATTERN>` or `FILE` entries alongside their options, but an options-block entry starts only at a flag, so `parameter_meta` carried only a positional's alternative spellings.
+`docopter._positional_descriptions` now reads the entries a second time, once `_read_command_line` has named the positionals, with `_option_entries` also starting an entry at a line whose first word has a positional's identifier; the first entry with a description that names any spelling of a positional describes it, joined as an option's description is, the same precedence D26 gives a flag's declarations.
+Such a line starts an entry under the same rule as an option line, indented less than the description column, so prose that opens with a positional's name inside a description is not read.
+The second reading's options are discarded, so the option set is the first reading's, and the description column it learns from positional entries reaches no option.
+No section heading is required: 31 of the 196 help texts have one, and requiring it loses `dos2unix`, `mypy` and `openssl dgst`, while lz4's "Advanced arguments:" and mypy's "Optional arguments:" head options.
+`transform` writes the description and then, on a line of its own, the `Also accepts:` list, as the argparse reader joins the texts of a paired switch.
+Over the subcommands of `cnvlib.commands.AP` at `COLUMNS=80`, all 34 positionals with help get a description equal to the parser's `help`, once the line breaks and indentation written inside cnvkit's own help strings are collapsed, which the argparse reader passes through as written.
+Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24, 38 of 532 positionals in 27 files gain a description, and only `parameter_meta` moves; no input, warning, CLI prefix or Nextflow line changes.
+Two kinds are not what a reader would write: argparse's subcommand placeholder, such as `{batch,target,...}`, takes the whole list of subcommands as its description, and GNU `date`'s `FORMAT` takes the text after two spaces in the prose line `FORMAT controls the output.  Interpreted sequences are:`.
+The cnvkit fixture's `targets` gains its description; the samtools fixture's WDL and both fixtures' Nextflow are byte-identical, verified by comparing the generated text before and after, and the changed corpus documents pass `miniwdl check`.
+
 ### Working on the vendored parser
 
 `doc2wrapper/_docopt.py` is docopt 0.6.2 with every definition of the runtime argv-matching path deleted whole, and `parse_defaults` with it, and nothing else changed except two regex literals that gained the `r` prefix they always needed.

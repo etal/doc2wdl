@@ -902,6 +902,48 @@ Options:
     assert docs[("-w", None)] == "Use a half- (or quarter-) width bin."
 
 
+def test_a_positional_takes_the_description_of_its_entry(help_text):
+    """argparse lists `targets` under "positional arguments:" with its help.
+
+    The option set is the one read without positional names.
+    """
+    doc = help_text("cnvkit-antitarget")
+    before = options_of(doc)
+    task = docopter.transform(*docopter.parse(doc))
+    assert (
+        task["cli_args"][0].doc == "BED or interval file listing the targeted regions."
+    )
+    assert options_of(doc) == before
+
+
+def test_a_positional_entry_matches_any_spelling_and_keeps_the_others():
+    """`<in.bam>|<in.sam>` is described by an entry naming either spelling."""
+    doc = (
+        "Usage: tool [-q] <in.bam>|<in.sam>\n\nArguments:\n"
+        "  <in.sam>  Alignments\n\nOptions:\n  -q  Quiet.\n"
+    )
+    task = docopter.transform(*docopter.parse(doc))
+    assert task["cli_args"][0].doc == "Alignments\nAlso accepts: <in.sam>"
+
+
+def test_a_positional_entry_without_a_description_leaves_it_to_a_later_one():
+    """The first entry with a description wins, as among a flag's declarations."""
+    doc = "Usage: tool FILE\n\nArguments:\n  FILE\n\n  FILE  The input.\n"
+    _usage, _prefix, positionals, _options = docopter.parse(doc)
+    assert positionals[0].description == "The input."
+
+
+def test_prose_opening_with_a_positionals_name_is_no_entry():
+    """Indented as descriptions are, a line naming the positional is prose."""
+    doc = (
+        "Usage: tool [-q] FILE\n\nOptions:\n"
+        "  -q          Quiet; implies that\n"
+        "              FILE  is read silently.\n"
+    )
+    _usage, _prefix, positionals, _options = docopter.parse(doc)
+    assert positionals[0].description == ""
+
+
 def test_an_option_only_in_the_synopsis_has_no_description():
     """The usage line can name a flag the options block never documents."""
     doc = "Usage: tool [--extra] [-g N] <in>\n\nOptions:\n  -g N  Gain.\n"
