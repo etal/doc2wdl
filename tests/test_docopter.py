@@ -513,6 +513,76 @@ def test_brackets_that_are_no_optional_part_of_a_name_skip_the_option(entry, cap
     assert "names no single flag" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "entry",
+    ["--apilog: Log.", "--  End of options.", "--------", "-#  Level.", "-W<w>"],
+)
+def test_notation_that_is_no_flag_skips_the_option(entry, capsys):
+    """absl's trailing colon, a placeholder in the name, or no flag at all.
+
+    bq reads `--apilog` with its value only when attached with `=`.
+    """
+    doc = f"Usage: tool [options]\n\nOptions:\n  {entry}\n  -q  Quiet.\n"
+    task = docopter.transform(*docopter.parse(doc))
+    assert [arg.option_flag for arg in task["cli_args"]] == ["-q"]
+    assert "names no single flag" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("flag", ["-nostdinc++", "--disable-@files", "-I-", "-@", "-%"])
+def test_flags_with_punctuation_tools_accept_are_passed(flag, capsys):
+    """gcc, java and BSD ls take these as written."""
+    doc = f"Usage: tool [options]\n\nOptions:\n  {flag}  Something.\n"
+    task = docopter.transform(*docopter.parse(doc))
+    assert [arg.option_flag for arg in task["cli_args"]] == [flag]
+    assert capsys.readouterr().err == ""
+
+
+def test_a_bar_joins_two_spellings_of_one_flag():
+    """SRA Toolkit writes `-A|--accession`; fastq-dump and prefetch take either.
+
+    The long spelling is passed, as for `-A, --accession`, so `-h|--help` is
+    recognized as help.
+    """
+    doc = (
+        "Usage: tool [options] <path>\n\nOptions:\n"
+        "  -A|--accession <acc>  Accession.\n"
+        "  -h|--help  Show help.\n"
+    )
+    assert options_of(doc) == [
+        ("-A", "--accession", 1, None),
+        ("-h", "--help", 0, False),
+    ]
+    task = docopter.transform(*docopter.parse(doc))
+    assert [(arg.name, arg.option_flag) for arg in task["cli_args"]] == [
+        ("path", ""),
+        ("accession", "--accession"),
+    ]
+
+
+@pytest.mark.parametrize("entry", ["--color[=WHEN]|--colour", "-a|-b|-c", "-ab|--long"])
+def test_a_bar_that_joins_no_short_and_long_flag_is_not_read(entry, capsys):
+    """Read as spellings, the first two would pass `--colour WHEN` or `-c` alone.
+
+    Only a bar between a one-letter short flag and a long flag is read as a spelling.
+    """
+    doc = f"Usage: tool [options]\n\nOptions:\n  {entry}  Something.\n  -q  Quiet.\n"
+    task = docopter.transform(*docopter.parse(doc))
+    assert [arg.option_flag for arg in task["cli_args"]] == ["-q"]
+    assert "names no single flag" in capsys.readouterr().err
+
+
+def test_an_ellipsis_after_a_flag_marks_a_count_not_a_spelling():
+    """clap writes a flag counted each time it is passed as `--verbose...`."""
+    doc = "Usage: tool [options]\n\nOptions:\n  -v, --verbose...  More output.\n"
+    task = docopter.transform(*docopter.parse(doc))
+    [arg] = task["cli_args"]
+    assert (arg.name, arg.option_flag, arg.option_has_value) == (
+        "verbose",
+        "--verbose",
+        False,
+    )
+
+
 def descriptions(doc):
     """Each parsed option's ``(short, long)`` flags and description."""
     _usage, _prefix, _positionals, options = docopter.parse(doc)

@@ -54,9 +54,20 @@ _PATTERN_SYMBOL = re.compile(r"([\[\]\(\)\|]|\.\.\.)")
 _REPEATED_VALUE = re.compile(r"(?<!\S)([^\s\[\]-]\S*) \[\1 \.\.\.\]")
 
 # A bracketed optional part inside a flag's name, as in `--region[s]-file`, and
-# what a flag is once its optional parts are removed; `_passable_flag` reads them.
+# what a flag is: one or two hyphens and a name of word characters, which may hold
+# `.`, `@`, `+` and hyphens, as `--disable-@files`, `-nostdinc++` and gcc's `-I-`
+# do, but may not end in `.`, which ends a sentence or opens Nextflow's `-e.key`; or
+# one of the characters `%`, `,` and `?`, as in BSD ls's `-%` and `-,`.
+# `_passable_flag` reads them.
 _OPTIONAL_PART = re.compile(r"\[[A-Za-z0-9-]+\](?=[\w-])")
-_PLAIN_FLAG = re.compile(r"--?\w[\w.-]*")
+_PLAIN_FLAG = re.compile(r"--?(?:[\w@](?:[\w.@+-]*[\w@+-])?|[%,?])")
+
+# A short and a long spelling of one flag joined by a bar, as SRA Toolkit and npm
+# write `-A|--accession`, and a flag followed by an ellipsis, as clap writes a
+# counted flag, `--verbose...`.  `_documented_options` reads the first as
+# `-A, --accession` and the second as `--verbose`.
+_FLAG_ALTERNATIVE = re.compile(r"((?<![^\s,])-\w)\|(?=--\w)")
+_FLAG_REPETITION = re.compile(r"(?<![^\s,])(-[^\s,|]*?[\w\]])\.\.\.(?=[\s,]|$)")
 
 # The `or:` that opens each further synopsis line in GNU help text.  `formal_usage`
 # splits alternatives at the program name, so this token would otherwise end the
@@ -331,10 +342,14 @@ def _passable_flag(flag):
     read: a group that ends the flag, as in ``--color[=WHEN]``, makes its value
     optional and attached, which a task cannot express, and perl's
     ``-[mM][-]module`` is a set of letters rather than an optional part.  Such an
-    option has no flag to pass.  A flag with no brackets is returned unchanged.
+    option has no flag to pass.
+
+    Every flag, bracketed or not, must then be a flag as `_PLAIN_FLAG` describes,
+    so other notation names no flag either: absl's trailing colon, as in bq's
+    ``--apilog:``, whose value bq reads only when attached with ``=``; a placeholder
+    in the name, as in gcc's ``-W<warning>`` and zstd's ``-#``; and text that is no
+    flag at all, such as the end-of-options marker ``--`` or a ruler of hyphens.
     """
-    if "[" not in flag and "]" not in flag:
-        return flag
     plain = _OPTIONAL_PART.sub("", flag)
     return plain if _PLAIN_FLAG.fullmatch(plain) else None
 
@@ -586,15 +601,20 @@ def _documented_options(doc, synopsis):
     `Option.parse` is given the text upstream's `parse_defaults` gave it, the option
     line from its first flag followed by the entry's later lines, joined by line
     breaks, so the flags, the argument count and a ``[default: ...]`` are read as
-    upstream reads them.  Only where an entry starts and ends differs.  Each option
-    also records the placeholder its flags repeat, as argparse writes the value of
-    an ``nargs="+"`` option as ``NORMAL [NORMAL ...]``, or None.
+    upstream reads them.  Only where an entry starts and ends differs, and two
+    spellings of flags, which `Option.parse` would read as one flag: the flags of
+    ``-A|--accession`` are read as ``-A, --accession``, and ``--verbose...`` as
+    ``--verbose``, which clap writes for a flag counted each time it is passed.
+    Each option also records the placeholder its flags repeat, as argparse writes
+    the value of an ``nargs="+"`` option as ``NORMAL [NORMAL ...]``, or None.
     """
     options = []
     for entry, description in _option_entries(doc, synopsis):
-        option = docopt.Option.parse("\n".join(entry))
+        flags, gap, text = entry[0].partition("  ")
+        flags = _FLAG_REPETITION.sub(r"\1", _FLAG_ALTERNATIVE.sub(r"\1, ", flags))
+        option = docopt.Option.parse("\n".join([flags + gap + text, *entry[1:]]))
         option.description = _joined(description)
-        repeat = _REPEATED_VALUE.search(entry[0].partition("  ")[0])
+        repeat = _REPEATED_VALUE.search(flags)
         option.repeated = repeat.group(1) if repeat else None
         options.append(option)
     return options

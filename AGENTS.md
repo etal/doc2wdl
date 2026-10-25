@@ -230,8 +230,6 @@ The pattern tree cannot tell such a word from a lowercase placeholder: `tr [-Ccs
 Reading a word as a command word when an angle-bracketed or uppercase placeholder follows it and every alternative agrees would accept `prog [-v] sub <x>`, but no synopsis among the 196 help texts of 2026-10-24 has that shape, and the rule would read `tool [-v] infile <outfile>` the same way, so it was not adopted.
 A subcommand that a `Commands:` section of the help text also names would be real evidence; no reader reads such a section yet.
 
-Smaller known wrongness, low priority: help-text notation other than brackets still leaks into flags, such as the `-A|--accession` of `fastq-dump`, read as one flag with a pipe in it, and the trailing colon of absl help, as in bq's `--apilog:`.
-
 ### Resolved
 
 **D1** — the reader called `docopt.docopt(doc)` with no `argv`, so docopt parsed
@@ -391,7 +389,7 @@ docopt reads an options-block entry's flags as written, so samtools' `--region[s
 A bracketed group of letters, digits and hyphens followed by more of the name is an optional part, and is removed, leaving the shortest spelling the notation names, so git's `--[no-]verbose` passes `--verbose`, never its negation, and the input is named from that flag.
 Any other bracket names no single flag, and the option is left out with a warning on standard error: a group that ends the flag, as in `--color[=WHEN]` and `-W[level]`, makes its value optional and attached to the flag, which a task cannot express, and perl's `-[mM][-]module` is a set of letters.
 The warning names the flag as `Option.parse` stored it, which for `--color[=WHEN]` is `--color[`, since it splits the flags at `=`.
-A flag with no brackets is unchanged, and the change is confined to `transform`, so `parse`, and with it every outcome class, is unchanged: removing an entry from the options list instead would change how the synopsis reads the flags it names.
+A flag with no brackets was unchanged until D25, and the change is confined to `transform`, so `parse`, and with it every outcome class, is unchanged: removing an entry from the options list instead would change how the synopsis reads the flags it names.
 An option is left out, rather than passed by another spelling its entry gives, because that spelling may take the same optional attached value, as git's `-S, --[no-]gpg-sign[=<key-id>]` does.
 Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24, 254 options in 35 files carry a bracket in their flag; 135 are passed by their shortest spelling, 118 of them in git subcommands, and 119 are left out, 15 of them bq's absl options, whose `--[no]quiet:` ends in a colon.
 35 records change, none in its CLI prefix or positionals.
@@ -436,6 +434,20 @@ A heading such as `Options:` under such a synopsis now ends it too, while one in
 `java`'s further alternatives, which open with `or` and no colon, are still cut, because each is followed by a parenthesized description, such as `(to execute a jar file)`, that a continuation rule would read as synopsis.
 Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24, two records change, `bsd-zip` and `prefetch`, each losing the inputs its prose declared, and no option, CLI prefix or warning moves; the extent of the synopsis is unchanged for `pip install` and `pip download` at `COLUMNS` of 60, 70, 80, 100, 120 and 200.
 Both fixtures and the corpus generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
+
+**D25** — help-text notation other than brackets reached the command line.
+`Option.parse` splits flags only at commas, spaces and `=`, so SRA Toolkit's and npm's `-A|--accession` was one short flag with a bar in it, clap's counted `--verbose...` kept its ellipsis, absl's `--apilog:` its colon, and text that is no flag, such as the end-of-options entry `--`, tree's rulers of hyphens, zstd's `-#` and gcc's `-W<warning>`, was passed as written.
+`docopter._documented_options` now reads an entry's flags with a bar between a one-letter short flag and a long flag as a comma, and with an ellipsis directly after a flag removed, before `Option.parse` sees them, so `-A|--accession` has a short and a long spelling and is passed as `--accession`, and `-h|--help` and `-V|--version` are recognized and skipped.
+Any other bar is left as written, so `--color[=WHEN]|--colour`, `-a|-b|-c` and `-ab|--long`, of which the first two, read as spellings, would pass `--colour` with a value and `-c` alone, are left out with D21's warning; no captured help text has any of them.
+The long spelling is the one passed, as for any option with both: probed against fastq-dump, prefetch and npm, every short spelling and all but one long spelling are accepted, fastq-dump rejecting its own documented `--verbose`, while prefetch documents both `-o|--order` and `-o|--output-file`, so passing short spellings would make two inputs pass `-o`, one of them with the wrong meaning.
+`_passable_flag` now requires every flag, not only a bracketed one, to be one or two hyphens followed either by word characters, which may include `.`, `@`, `+` and hyphens but may not end in `.`, or by one of `%`, `,` and `?`; any other option is left out with D21's warning.
+That keeps `-nostdinc++`, `--disable-@files`, gcc's `-I-`, bedtools' `-name+` and BSD ls's `-@`, `-%` and `-,`, which those tools accept, and leaves out gcc's `-###`, a real flag that has no input.
+absl's colon is left out rather than removed, because bq reads such a flag's value only when attached with `=`: `bq --apilog=/tmp/x version` writes the log, while `bq --apilog /tmp/x version` reads the path as its command, and a task passes a value after a space.
+bq's 15 `--[no]x:` switches stay left out as before; they could be expressed with `Argument.false_flag`, but `Option.parse` reads each as taking a value, since absl separates a flag from its description by one space.
+Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24, 32 records change, none in its CLI prefix or positionals: 59 inputs are renamed after their passable flag, such as `A__accession` to `accession`, 90 are left out, and 86 warnings appear.
+In the corpus only `jq` changes, losing the `arg_` input its `--` entry declared; the changed `fastq-dump`, `prefetch`, `npm-install`, `bq`, `uv` and `tree` documents pass `miniwdl check` and `nextflow lint`.
+Both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
+Not covered: a bracketed value spelled inside the synopsis, as in `ls [--color[=WHEN]] FILE`, still registers a switch `--color` and a positional `WHEN`, since the synopsis is read before any flag is rewritten; no captured help text does so.
 
 ### Working on the vendored parser
 
