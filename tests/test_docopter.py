@@ -42,6 +42,12 @@ REPEATED_SUBCOMMAND = """Usage: prog sub <x>
        prog sub <y> <z>
 """
 
+# Alternatives naming different subcommands.  A task wraps one command, so only
+# the first can be wrapped.
+DIFFERENT_SUBCOMMANDS = """Usage: git log [-p] <a>
+       git show [-s] <b>
+"""
+
 
 def test_positionals_are_recovered_from_a_usage_line(help_text):
     """The reader must not silently drop the arguments the task exists to accept.
@@ -49,7 +55,9 @@ def test_positionals_are_recovered_from_a_usage_line(help_text):
     Asserting on the RETURN VALUE is the point: the defect this replaces printed a
     warning and returned an empty list, which no test of "does it raise" can see.
     """
-    _usage, positionals, _options = docopter.parse(help_text("cnvkit-antitarget"))
+    _usage, _prefix, positionals, _options = docopter.parse(
+        help_text("cnvkit-antitarget")
+    )
     assert [p.spellings for p in positionals] == [["targets"]]
     assert positionals[0].is_required
     assert not positionals[0].is_array
@@ -57,7 +65,7 @@ def test_positionals_are_recovered_from_a_usage_line(help_text):
 
 def test_alternative_spellings_are_one_positional(help_text):
     """`<in.bam>|<in.sam>|<in.cram>` is one input accepting three formats."""
-    _usage, positionals, _options = docopter.parse(help_text("samtools-view"))
+    _usage, _prefix, positionals, _options = docopter.parse(help_text("samtools-view"))
     assert [p.spellings for p in positionals] == [
         ["<in.bam>", "<in.sam>", "<in.cram>"],
         ["region"],
@@ -66,7 +74,7 @@ def test_alternative_spellings_are_one_positional(help_text):
 
 def test_repeated_optional_positional_is_an_optional_array(help_text):
     """`[region ...]` repeats, and appears in only one usage alternative."""
-    _usage, positionals, _options = docopter.parse(help_text("samtools-view"))
+    _usage, _prefix, positionals, _options = docopter.parse(help_text("samtools-view"))
     region = positionals[1]
     assert region.is_array
     assert not region.is_required
@@ -74,8 +82,7 @@ def test_repeated_optional_positional_is_an_optional_array(help_text):
 
 def test_command_words_are_the_prefix_not_arguments(help_text):
     """A subcommand names the command being wrapped; it is not an input to it."""
-    usage, positionals, options = docopter.parse(help_text("samtools-view"))
-    task = docopter.transform(usage, positionals, options)
+    task = docopter.transform(*docopter.parse(help_text("samtools-view")))
     assert task["cli_prefix"] == "samtools view"
     assert "view" not in [arg.name for arg in task["cli_args"]]
 
@@ -107,18 +114,93 @@ def test_missing_or_ambiguous_usage_section_is_fatal(doc):
         docopter.parse(doc)
 
 
-def test_subcommand_is_excluded_from_every_alternative():
+def test_subcommand_is_excluded_from_every_alternative(capsys):
     """A subcommand is dropped from every branch, so alternatives stay aligned.
 
     Naively removing it from the first alternative only would merge `sub` in as a
     spelling of `<x>`, push `<y>` and `<z>` one slot right, and silently demote
     them to optional.
     """
-    usage, positionals, options = docopter.parse(REPEATED_SUBCOMMAND)
-    assert docopter.transform(usage, positionals, options)["cli_prefix"] == "prog sub"
+    _usage, cli_prefix, positionals, _options = docopter.parse(REPEATED_SUBCOMMAND)
+    assert cli_prefix == "prog sub"
     assert [p.spellings for p in positionals] == [["<x>", "<y>"], ["<z>"]]
     assert positionals[0].is_required
     assert not positionals[1].is_required
+    assert capsys.readouterr().err == ""
+
+
+def test_options_before_a_later_alternatives_subcommand_keep_it_a_command_word(
+    capsys,
+):
+    """An option group may precede the subcommand in an alternative after the first."""
+    doc = "Usage: prog sub <x>\n       prog [-v] sub <y>\n"
+    _usage, cli_prefix, positionals, _options = docopter.parse(doc)
+    assert cli_prefix == "prog sub"
+    assert [p.spellings for p in positionals] == [["<x>", "<y>"]]
+    assert capsys.readouterr().err == ""
+
+
+def test_alternatives_naming_different_subcommands_warn_and_stay_aligned(capsys):
+    """The first alternative's command is wrapped, and the user is told so.
+
+    The other alternative's subcommand is dropped by its position, so `<b>` shares
+    a slot with `<a>`.  Dropping only the words named on the first line used to
+    leave `show` in the first slot, as a spelling of `<a>`, and push `<b>` into a
+    second, all without any message on standard error.
+    """
+    _usage, cli_prefix, positionals, _options = docopter.parse(DIFFERENT_SUBCOMMANDS)
+    assert cli_prefix == "git log"
+    assert [p.spellings for p in positionals] == [["<a>", "<b>"]]
+    assert "begin with different command words" in capsys.readouterr().err
+
+
+def test_only_the_leading_command_words_are_dropped():
+    """A later argument spelled like the subcommand is still an argument."""
+    _usage, cli_prefix, positionals, _options = docopter.parse(
+        "Usage: tool index <in> [index]\n"
+    )
+    assert cli_prefix == "tool index"
+    assert [p.spellings for p in positionals] == [["<in>"], ["index"]]
+
+
+def test_a_command_word_must_also_begin_the_parsed_synopsis():
+    """Text that only looks like a command word stays an argument.
+
+    `sub|alt` reads as one literal word, but the synopsis offers a choice between
+    `sub` and `alt`, so the prefix used to carry a shell pipe.
+    """
+    _usage, cli_prefix, positionals, _options = docopter.parse(
+        "Usage: prog sub|alt <x>\n"
+    )
+    assert cli_prefix == "prog"
+    assert [p.spellings for p in positionals] == [["sub", "alt"], ["<x>"]]
+
+
+@pytest.mark.parametrize(
+    "synopsis, spellings",
+    [("prog A) (B", [["A"], ["B"]]), ("prog A) | B | (C", [["A", "B", "C"]])],
+)
+def test_a_synopsis_that_closes_its_parenthesis_early_still_parses(synopsis, spellings):
+    """`formal_usage` wraps the synopsis in one group, which `A)` closes early.
+
+    The tree then holds several groups, or alternatives that are single tokens.
+    """
+    _usage, cli_prefix, positionals, _options = docopter.parse(f"Usage: {synopsis}\n")
+    assert cli_prefix == "prog"
+    assert [p.spellings for p in positionals] == spellings
+
+
+def test_gnu_continuation_marker_is_not_an_argument(capsys):
+    """GNU help opens each further synopsis line with `or:`, which names nothing.
+
+    `formal_usage` splits alternatives at the program name, so the marker used to
+    end the previous alternative and become an input named `or`.
+    """
+    doc = "Usage: tool [-v] SOURCE DEST\n  or:  tool [-v] SOURCE... DIRECTORY\n"
+    _usage, cli_prefix, positionals, _options = docopter.parse(doc)
+    assert cli_prefix == "tool"
+    assert [p.spellings for p in positionals] == [["SOURCE"], ["DEST", "DIRECTORY"]]
+    assert capsys.readouterr().err == ""
 
 
 def test_unparseable_usage_line_degrades_instead_of_crashing(capsys):
@@ -127,7 +209,8 @@ def test_unparseable_usage_line_degrades_instead_of_crashing(capsys):
     A partial task the user finishes by hand beats a traceback: the degraded files
     in `tests/corpus` hit this, and their options are still recoverable.
     """
-    _usage, positionals, options = docopter.parse(ARITY_OVERLOAD)
+    _usage, cli_prefix, positionals, options = docopter.parse(ARITY_OVERLOAD)
+    assert cli_prefix == "tool"
     assert positionals == []
     assert [opt.long for opt in options] == ["--tag"]
     assert "could not read positional arguments" in capsys.readouterr().err
@@ -156,7 +239,9 @@ Options:
 )
 def test_an_optional_value_in_brackets_belongs_to_its_option(spelled, capsys):
     """The bracketed value is the option's, and other groups keep their brackets."""
-    _usage, positionals, options = docopter.parse(OPTIONAL_VALUES.format(spelled))
+    _usage, _prefix, positionals, options = docopter.parse(
+        OPTIONAL_VALUES.format(spelled)
+    )
     assert [(p.spellings, p.is_required) for p in positionals] == [
         (["<extra>"], False),
         (["<more>"], False),
@@ -188,7 +273,7 @@ def test_a_group_that_is_not_one_placeholder_keeps_its_brackets(group, capsys):
     doc = (
         f"Usage: tool [-p [N]] [--extra] [-p {group}] <in>\n\nOptions:\n  -p N  Gain.\n"
     )
-    _usage, positionals, options = docopter.parse(doc)
+    _usage, _prefix, positionals, options = docopter.parse(doc)
     assert positionals == []
     assert [(opt.short, opt.long) for opt in options] == [("-p", None)]
     assert "unmatched '('" in capsys.readouterr().err
@@ -246,7 +331,7 @@ def test_a_short_only_help_flag_is_still_skipped():
 
 def descriptions(doc):
     """Each parsed option's ``(short, long)`` flags and description."""
-    _usage, _positionals, options = docopter.parse(doc)
+    _usage, _prefix, _positionals, options = docopter.parse(doc)
     return {(opt.short, opt.long): opt.description for opt in options}
 
 
@@ -284,7 +369,7 @@ def test_a_description_ends_at_a_blank_line():
 
 def options_of(doc):
     """Each parsed option's flags, argument count and default, in order."""
-    _usage, _positionals, options = docopter.parse(doc)
+    _usage, _prefix, _positionals, options = docopter.parse(doc)
     return [(opt.short, opt.long, opt.argcount, opt.value) for opt in options]
 
 
@@ -338,7 +423,7 @@ Startup:
 def test_an_option_documented_twice_keeps_each_description():
     """Each entry's description stays with the option it was written beside."""
     doc = "Usage: tool [options]\n\nBasic:\n  -v  Be loud.\n\nMore:\n  -v  Be louder.\n"
-    _usage, _positionals, options = docopter.parse(doc)
+    _usage, _prefix, _positionals, options = docopter.parse(doc)
     assert [(opt.short, opt.description) for opt in options] == [
         ("-v", "Be loud."),
         ("-v", "Be louder."),

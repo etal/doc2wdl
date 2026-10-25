@@ -180,7 +180,7 @@ Because the corpus is not a sample, its counts describe the corpus and not how o
   The rest run to completion with extra positionals: summary placeholders such as `[OPTIONS]` and `...` (`tabix`), option values the reader cannot attribute to an option (`ls`, which has no options block, and `bedtools intersect`, whose tab-indented block yields no options), an options block's prose (`htsfile`, swallowed as `samtools stats` is but without desyncing), or a placeholder split at its space (`jq`'s `<jq filter>`).
   argparse's `X [X ...]` for `nargs="+"` becomes two positionals, one required and one an optional array (`miniwdl check`), and after an option, as in `-n NORMAL [NORMAL ...]`, the repetition becomes a positional (`cnvkit.py import-rna`).
 
-The reliable shape is a single blank-line-terminated synopsis naming at most one fixed subcommand, where no flag's arity differs between the options block and the synopsis and no wrapped line of the synopsis begins with a flag.
+The reliable shape is a single blank-line-terminated synopsis naming at most one fixed subcommand, written directly after the program name, where no flag's arity differs between the options block and the synopsis and no wrapped line of the synopsis begins with a flag.
 argparse-generated help departs from it by wrapping the synopsis at `COLUMNS`, so whether a synopsis line opens with a flag depends on the width: `python3 -m zipfile` degrades at 80 columns and parses at 120.
 Hand-written C help departs from it by placing the options block directly under the synopsis (`samtools stats`, `htsfile`) or by leaving the block out (`ls`).
 Both fixtures in `tests/example/` sit inside the shape, which is why they were never a sample.
@@ -230,6 +230,11 @@ An option value placeholder such as `-t FILE` would be real evidence, but `Optio
 So in `help-zipfile.txt` the synopsis line opening with `-c` declares `-t` a second time, and docopt rejects `-t` as ambiguous.
 Skipping entries inside the usage paragraph would let `help-zipfile.txt` parse, but it would also turn `help-samtools-stats.txt` from degraded into parsed with 208 positionals read from its options block, so the two cases need a rule that tells a wrapped synopsis line from an options block, which none yet does.
 An options block indented with tabs, as the bedtools subcommands' are, yields no options at all, because an entry starts only after spaces.
+
+**A subcommand after an option group is read as an argument.** The command words are the program name and the literal words written directly after it, so `Usage: prog [-v] sub <x>` wraps `prog` and declares an input `sub`, typed `File` as every positional is, which the generated task cannot pass as the word `sub`.
+The pattern tree cannot tell such a word from a lowercase placeholder: `tr [-Ccsu] string1 string2` and the fixture's `cnvkit.py antitarget [-h] ... targets` have the same shape.
+Reading a word as a command word when an angle-bracketed or uppercase placeholder follows it and every alternative agrees would accept `prog [-v] sub <x>`, but no synopsis among the 196 help texts of 2026-10-24 has that shape, and the rule would read `tool [-v] infile <outfile>` the same way, so it was not adopted.
+A subcommand that a `Commands:` section of the help text also names would be real evidence; no reader reads such a section yet.
 
 Smaller known wrongness, low priority: help-text notation leaks into flags, so
 samtools' `--region[s]-file FILE` becomes a literal flag `--region[s]-file`.
@@ -345,7 +350,7 @@ Over 196 help texts, the fixtures, the corpus and 180 captured from tools on the
 **D18** — argparse's notation for an optional value desynchronized the synopsis.
 argparse writes the value of an option with `nargs="?"` or `nargs="*"` in brackets, as in `[-p [PROCESSES]]` and `[-n [FILES ...]]`, because the value may be left out, while the options block declares the option as taking a value.
 `parse_shorts` and `parse_long` therefore read the opening bracket as the value, the group's closing bracket ended the enclosing group, and `parse_pattern` raised `unmatched '('`, so `cnvkit.py batch` lost its one positional.
-When a synopsis fails to parse, `docopter._parse_positionals` now reads it a second time, with the brackets removed from each group that directly follows an option the parser would give the next token as its value and that holds one placeholder, optionally followed by `...`.
+When a synopsis fails to parse, `docopter._read_command_line` now reads it a second time, with the brackets removed from each group that directly follows an option the parser would give the next token as its value and that holds one placeholder, optionally followed by `...`.
 The test of the option mirrors the two functions' own rules, an exact match for a long option without `=` and, for a stack of short options, a first value-taking letter that is the last, and it runs on `parse_pattern`'s tokens rather than on the text, so git's attached `-u[<mode>]` is found too.
 Any other group keeps its brackets, among them an alternation, a group of two arguments, a group that opens with a flag, and the form Python releases before 3.9 wrote for `nargs="*"`, `[FILES [FILES ...]]`, which still degrades.
 The second reading runs only after the first fails, never as a pre-pass: of the 1,948,716 patterns of one to six tokens drawn from `[ ] ( ) | -p -q -pq --proc --flag A`, with `-p, --proc` taking a value, a pre-pass would rewrite 688, and 32 of those parse as written, each with a bracket left unclosed, such as `tool [-p [A]`.
@@ -357,6 +362,20 @@ Those three also gain 39 option declarations named only in what is read as the s
 Both fixtures generate byte-identical WDL and Nextflow, verified by checksum, and the corpus's `cnvkit.py batch` gains `Array[File] sample_fnames` and passes `miniwdl check` and `nextflow lint`.
 The option keeps its argument count of 1, so the generated input passes `--processes` with a value or not at all, and cannot pass the bare flag, which cnvkit reads as "use every CPU".
 Not covered: `nargs="+"`, written `-n NORMAL [NORMAL ...]`, whose group follows the value rather than the option and still becomes a positional, and an optional prefix of a value, such as curl's `--proxy [protocol://]host`, which the rule would misread in a synopsis that otherwise parses; no captured synopsis does.
+
+**D19** — the command words were read from the head of the first synopsis line and then removed from the pattern tree wherever their names occurred.
+An alternative naming another subcommand therefore kept its word: `Usage: git log <a>` followed by `git show <b>` read `show` as a spelling of `<a>` and moved `<b>` into a slot of its own, with no warning.
+`docopter._read_command_line` now keeps those of the text's command words that the first alternative's tree also begins with, and removes as many leading command words from every alternative by position, never by name, so `<a>` and `<b>` share one slot.
+A word that only the text reads as a command word is therefore an argument: `Usage: prog sub|alt <x>` offers a choice between `sub` and `alt`, and its prefix used to be `prog sub|alt`, a shell pipe.
+An alternative that begins with other words produces a warning on standard error, since a task wraps one command, and the task wraps the first alternative's.
+The warning shares no text with the one for a synopsis that does not parse, so `tests/test_corpus.py` still classifies such a file as parsed.
+`docopter.parse` now returns the CLI prefix beside the usage text, and `transform` takes it rather than reading the text again.
+GNU help opens each further synopsis line with `or:`, and `formal_usage`, which splits alternatives at the program name, made that token the last word of the alternative before it and so an input named `or`; `_CONTINUATION` removes it before `formal_usage` reads the synopsis, and the usage text the templates comment keeps it.
+Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24, no CLI prefix changes, no record of the fixtures or the corpus moves, and 15 captured records change.
+In 14 of them an input named `or` or a spelling `or:` is gone, among them `git-log`, which also warns and aligns its two alternatives, and `samtools-sort`, which warns because its options block, read as usage, mentions `samtools index`.
+The fifteenth, `bsd-sed`, warns because its first alternative begins `sed script`, where `script` is a placeholder that the text, now as before, reads as a command word; the `script` in its second alternative's `-e script` is no longer removed, so `script_file` becomes an input of its own.
+In `samtools-index`, three words `index` in that file's options block, which is likewise read as usage, are no longer removed, since they are not the leading words of an alternative.
+Both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
 
 ### Working on the vendored parser
 

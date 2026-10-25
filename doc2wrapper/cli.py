@@ -91,7 +91,7 @@ def cmd_docopt(args):
     """Console script for subcommand 'docopt'."""
     doc = args.filename.read()
     try:
-        usage, positionals, options = docopter.parse(doc)
+        usage, cli_prefix, positionals, options = docopter.parse(doc)
     except docopter.UsageNotFound as why:
         print(
             f"Cannot read a command line from this help text: {why}",
@@ -102,7 +102,7 @@ def cmd_docopt(args):
         f"Parsed {len(positionals)} positional and {len(options)} optional CLI arguments.",
         file=sys.stderr,
     )
-    task = docopter.transform(usage, positionals, options)
+    task = docopter.transform(usage, cli_prefix, positionals, options)
     args.output.write(WRITERS[args.target]([task]))
     return 0
 

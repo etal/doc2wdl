@@ -62,7 +62,7 @@ Known issues
 Reading help text is best-effort by nature, and its limits are recorded rather than guessed.
 `tests/corpus/` holds 14 help texts captured from real tools, chosen to represent the shapes the reader meets rather than as a sample, and `tests/corpus/manifest.tsv` records the command that produced each and what the reader makes of it.
 Three of the 14 produce no usable usage line at all, two yield the options but no positional arguments, with a warning, and nine parse, of which two yield exactly the tool's positional arguments; the others add placeholders such as `[OPTIONS]`, option values or prose, or split one argument in two.
-The reliable shape is a single usage synopsis terminated by a blank line, naming at most one fixed subcommand, in which no flag's arity differs between the options list and the synopsis, and no wrapped line of the synopsis begins with a flag.
+The reliable shape is a single usage synopsis terminated by a blank line, naming at most one fixed subcommand, written directly after the program name, in which no flag's arity differs between the options list and the synopsis, and no wrapped line of the synopsis begins with a flag.
 Hand-written getopt-style help departs from it when the options list follows the synopsis with no blank line, and a Cobra heading that reads `USAGE` without a colon is not found at all.
 argparse-generated help departs from it whenever wrapping at the terminal width starts a synopsis line with a flag, so the width at which help text was captured can decide the outcome.
 

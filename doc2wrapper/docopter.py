@@ -49,6 +49,11 @@ _WRAPPED_WORD = re.compile(
 # verbatim, so that splitting the padded text yields the tokens it reads.
 _PATTERN_SYMBOL = re.compile(r"([\[\]\(\)\|]|\.\.\.)")
 
+# The `or:` that opens each further synopsis line in GNU help text.  `formal_usage`
+# splits alternatives at the program name, so this token would otherwise end the
+# previous alternative as a bare word, and so as a positional named `or`.
+_CONTINUATION = re.compile(r"^[ \t]*or:(?=[ \t]|$)", re.IGNORECASE | re.MULTILINE)
+
 
 class UsageNotFound(Exception):
     """The help text has no single ``usage:`` section to read a command line from."""
@@ -77,9 +82,10 @@ def parse(doc):
 
     Return:
         A tuple of the usage text (with the leading ``usage:`` marker removed),
-        a list of `Positional`, and a list of docopt ``Option``, each carrying a
-        ``description``: its text from the options block, or ``""`` where none
-        was written.
+        the CLI prefix, i.e. the program name and the command words after it that
+        name the command the task invokes, a list of `Positional`, and a list of
+        docopt ``Option``, each carrying a ``description``: its text from the
+        options block, or ``""`` where none was written.
 
     Raises:
         UsageNotFound: the help text has no usage section, or has several.  There
@@ -108,19 +114,20 @@ def parse(doc):
     #   description # set by `_documented_options`, not by docopt
     options = _documented_options(doc)
     documented = len(options)
-    positionals = _parse_positionals(printable, usage, options)
-    # `_parse_positionals` appends the options named only in the synopsis, which
+    cli_prefix, positionals = _read_command_line(printable, usage, options)
+    # `_read_command_line` appends the options named only in the synopsis, which
     # have no options-block entry and so no description.
     for option in options[documented:]:
         option.description = ""
-    return usage, positionals, options
+    return usage, cli_prefix, positionals, options
 
 
-def transform(usage, positionals, options):
+def transform(usage, cli_prefix, positionals, options):
     """Prepare CLI values for interpolation.
 
     Args:
         usage: usage text, as returned by `parse`
+        cli_prefix: the command words the task invokes, as returned by `parse`
         positionals: list of `Positional`, as returned by `parse`
         options: list of docopt ``Option``, as returned by `parse`
 
@@ -142,7 +149,6 @@ def transform(usage, positionals, options):
               this is a file referring to that output, otherwise the task will use
               stdout as its output.
     """
-    cli_prefix = " ".join(_command_words(usage))
     title = task_title(cli_prefix)
 
     # A usage line states neither a type nor a default for a positional, so the
@@ -216,10 +222,10 @@ def _is_command_word(token):
 def _command_words(usage):
     """The command words at the head of a usage line, e.g. ``['samtools', 'view']``.
 
-    These name the command the task invokes, so they are the CLI prefix rather than
-    arguments to it.  The first token is the program name whatever it looks like;
-    the tokens after it are command words only for as long as they look like literal
-    words rather than arguments.
+    This is the reading of the text alone.  The first token is the program name
+    whatever it looks like; the tokens after it are command words only for as long
+    as they look like literal words rather than arguments, so an option group ends
+    the run.  `_read_command_line` keeps only the words the pattern tree confirms.
     """
     tokens = usage.splitlines()[0].split()
     return tokens[:1] + list(itertools.takewhile(_is_command_word, tokens[1:]))
@@ -240,23 +246,33 @@ def _identifier(token):
     return name + "_" if name == OUTPUT_FILE_NAME else name
 
 
-def _parse_positionals(printable, usage, options):
-    """Read the positional arguments out of the usage line's pattern tree.
+def _read_command_line(printable, usage, options):
+    """Read the command words and positional arguments out of the usage line's tree.
 
     `printable` must still carry its `usage:` marker: `formal_usage` drops the first
     token of what it is given and treats the next as the program name, so passing
     the marker-stripped `usage` instead makes it eat the program name and lose the
     first positional.  The two arguments are not interchangeable.
 
+    The command words are those of `_command_words` that the first alternative's
+    tree also begins with, as `_lead_commands` finds them.  The same number of
+    leading words is dropped from every alternative by position, never by name: a
+    later argument may share a command word's name, and an alternative that names
+    another subcommand, such as ``git show`` after ``git log``, would otherwise keep
+    that word and shift its arguments one slot out of alignment.  Such an
+    alternative produces a warning, since the task can wrap only one command.
+
     A pattern that does not parse is read once more with the brackets around each
     option's value removed, as `_without_value_brackets` describes.  The retry runs
     on a copy of the options-block entries, and `options` takes the options it
     appends only when it succeeds, so a usage line that parses neither way leaves
     `options` exactly as the first attempt did, and the warning reports that
-    attempt's error.  A usage line that parses as written is never rewritten.
+    attempt's error.  A usage line that parses as written is never rewritten.  With
+    no tree to confirm them, the command words are those of the text alone.
     """
+    words = _command_words(usage)
     entries = options[:]
-    formal = docopt.formal_usage(printable)
+    formal = docopt.formal_usage(_CONTINUATION.sub("", printable))
     try:
         pattern = docopt.parse_pattern(formal, options)
     except docopt.DocoptLanguageError as why:
@@ -270,9 +286,63 @@ def _parse_positionals(printable, usage, options):
                 why,
                 file=sys.stderr,
             )
-            return []
+            return " ".join(words), []
         options[:] = entries
-    return _positionals_of(pattern, set(_command_words(usage)))
+    # `formal_usage` wraps each line of the synopsis in parentheses and joins the
+    # lines with `|`, so the tree's one child is either an Either of the lines or
+    # the single line itself.  A synopsis that closes and reopens a parenthesis, as
+    # in `prog a) (b`, gives the tree several children, read as one alternative.
+    top = pattern.children[0] if len(pattern.children) == 1 else pattern
+    leads = [
+        _lead_commands(alternative)
+        for alternative in (top.children if isinstance(top, docopt.Either) else [top])
+    ]
+    count = 0
+    for word, node in zip(words[1:], leads[0]):
+        if word != node.name:
+            break
+        count += 1
+    confirmed = words[1 : 1 + count]
+    prefix = " ".join(words[:1] + confirmed)
+    if any([node.name for node in lead[:count]] != confirmed for lead in leads[1:]):
+        print(
+            "Warning: the usage line's alternatives begin with different command "
+            f"words; the task wraps '{prefix}', which the first names.",
+            file=sys.stderr,
+        )
+    dropped = {id(node) for lead in leads for node in lead[:count]}
+    return prefix, _positionals_of(pattern, dropped)
+
+
+def _lead_commands(alternative):
+    """The `Command` nodes an alternative of the usage line begins with, in order.
+
+    Options before a command word do not end the run, so that ``prog [-v] sub <x>``
+    as a later alternative still begins with ``sub``; an argument, a group holding
+    one, and a token that is not a literal word do.  docopt binds ``|`` at sequence
+    level, so a line such as ``samtools view [options] <in.bam>|<in.sam>`` parses as
+    a choice between whole sequences, and the line's first words are in the first.
+    """
+    children = _sequence(alternative)
+    while len(children) == 1 and isinstance(children[0], docopt.Either):
+        children = _sequence(children[0].children[0])
+    lead = []
+    for child in children:
+        if not child.flat(docopt.Argument, docopt.Command):
+            continue
+        if not (isinstance(child, docopt.Command) and _is_command_word(child.name)):
+            break
+        lead.append(child)
+    return lead
+
+
+def _sequence(node):
+    """The nodes a pattern node consists of, in order; a leaf consists of itself.
+
+    An alternative may be a single token, as `B` is in ``prog A) | B | (C``, which
+    `formal_usage` turns into ``( A) | B | (C )``.
+    """
+    return node.children if isinstance(node, docopt.ParentPattern) else [node]
 
 
 def _without_value_brackets(formal, options):
@@ -445,22 +515,22 @@ def _joined(lines):
     return _WRAPPED_WORD.sub(r"\1\2", text).replace("\n", " ")
 
 
-def _positionals_of(node, command_words, is_required=True, is_array=False):
+def _positionals_of(node, dropped, is_required=True, is_array=False):
     """Collect positional slots from a docopt pattern tree, in usage order.
 
-    `command_words` names the command being wrapped.  Those words are dropped
-    wherever they occur rather than sliced off the front of the usage text, because
-    docopt binds `|` at sequence level: a usage line with several alternatives
-    repeats the subcommand inside every one of them, and stripping only the first
-    would shift every later alternative's arguments one slot out of alignment.
+    `dropped` holds the `id` of each `Command` node that is a command word of the
+    wrapped command rather than an argument to it.  Identity, not equality, decides,
+    because docopt's nodes compare equal by their text: the ``sub`` that opens one
+    alternative equals the ``sub`` that opens the next, and a later argument may
+    share a command word's name.
     """
-    # Option has no `.children`, so it must be recognised before the generic arm.
+    # Option has no `.children`, so it must be recognized before the generic arm.
     # AnyOptions is included as a guard for the reader rather than from necessity:
     # nothing populates its children on the static path, so the generic arm would
     # return an empty list for it anyway.
     if isinstance(node, (docopt.Option, docopt.AnyOptions)):
         return []
-    if isinstance(node, docopt.Command) and node.name in command_words:
+    if isinstance(node, docopt.Command) and id(node) in dropped:
         return []
     # Command subclasses Argument, so this arm covers both remaining leaf kinds.
     if isinstance(node, docopt.Argument):
@@ -468,7 +538,7 @@ def _positionals_of(node, command_words, is_required=True, is_array=False):
     if isinstance(node, docopt.Either):
         return _merge_alternatives(
             [
-                _positionals_of(child, command_words, is_required, is_array)
+                _positionals_of(child, dropped, is_required, is_array)
                 for child in node.children
             ]
         )
@@ -477,7 +547,7 @@ def _positionals_of(node, command_words, is_required=True, is_array=False):
         for child in node.children
         for slot in _positionals_of(
             child,
-            command_words,
+            dropped,
             is_required and not isinstance(node, docopt.Optional),
             is_array or isinstance(node, docopt.OneOrMore),
         )
