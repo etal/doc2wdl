@@ -77,12 +77,33 @@ def unpack_tasks(arg_parser, prog):
         else:
             raise TypeError(f"What is this? {action} :: {type(action)}")
 
-    task_kwargs["cli_args"] = list(_arguments(handled))
+    task_kwargs["cli_args"] = list(
+        _arguments(handled, _dest_defaults(arg_parser._actions))
+    )
     if task_kwargs["cli_args"]:
         yield task_kwargs
 
 
-def _arguments(actions):
+def _dest_defaults(actions):
+    """The action whose default argparse fills each `dest` with, by `dest`.
+
+    argparse sets an absent attribute from the first action, in declaration
+    order, whose default is not `SUPPRESS`; a later action writing the same `dest`
+    never reaches the namespace with its default.  Read over every action of the
+    parser, including those that are no input, since an action the task leaves
+    out fills the `dest` all the same.
+    """
+    filling = {}
+    for action in actions:
+        if (
+            action.dest is not argparse.SUPPRESS
+            and action.default is not argparse.SUPPRESS
+        ):
+            filling.setdefault(action.dest, action)
+    return filling
+
+
+def _arguments(actions, filling):
     """Model the handled actions in source order, given which share a `dest`.
 
     Several actions may write one `dest`.  A `store_true` and a `store_false` doing
@@ -99,6 +120,8 @@ def _arguments(actions):
     that passes `-q` when true.  None of these flag-named inputs carries its
     action's default, because argparse fills the `dest` from one action's default
     alone, so each defaults to passing nothing and the tool's own default stands.
+    An input of its own declares its action's default only where `filling`, from
+    `_dest_defaults`, names that action.
     """
     sharing = {}
     for action in actions:
@@ -107,10 +130,10 @@ def _arguments(actions):
         group = sharing[action.dest]
         dest_name = legal_name(action.dest, prefix="arg_")
         if len(group) == 1:
-            yield _argument(action, dest_name)
+            yield _argument(action, dest_name, filling.get(action.dest) is action)
         elif _is_paired_switch(group):
             if action is group[0]:
-                yield _paired_switch(group, dest_name)
+                yield _paired_switch(group, dest_name, filling.get(action.dest))
         else:
             arg = _argument(action, dest_name)
             if arg.false_flag and not arg.option_flag:
@@ -143,15 +166,15 @@ def _is_paired_switch(group):
     )
 
 
-def _paired_switch(group, name):
+def _paired_switch(group, name, filler):
     """One switch input for a `store_true` and a `store_false` sharing a `dest`.
 
-    argparse fills an absent `dest` from the first action whose default is not
-    `SUPPRESS`, so that action's default is the switch's default.
+    The switch's default is that of the action argparse fills the `dest` from,
+    `filler`, where that is one of the two.
     """
     affirmative, negative = sorted(group, key=lambda action: not action.const)
-    defaulting = [action for action in group if action.default is not argparse.SUPPRESS]
-    first = _argument(defaulting[0] if defaulting else group[0], name)
+    filled = any(action is filler for action in group)
+    first = _argument(filler if filled else group[0], name, filled)
     return replace(
         first,
         option_flag=affirmative.option_strings[-1],
@@ -165,10 +188,18 @@ def _paired_switch(group, name):
     )
 
 
-def _argument(action, name):
-    """The model of one handled argparse action, under the given input name."""
+def _argument(action, name, carries_default=True):
+    """The model of one handled argparse action, under the given input name.
+
+    `carries_default` is false where argparse fills the `dest` from another
+    action's default.
+    """
     # SUPPRESS leaves the attribute absent from the namespace: there is no value.
-    default = None if action.default is argparse.SUPPRESS else action.default
+    default = (
+        action.default
+        if carries_default and action.default is not argparse.SUPPRESS
+        else None
+    )
     if action.nargs == 0:
         option_flag, false_flag, default = _switch(action, default)
         value_type, default = type_and_default(declared=bool, default=default)

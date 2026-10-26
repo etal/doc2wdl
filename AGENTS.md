@@ -492,7 +492,7 @@ The cnvkit fixture's `targets` gains its description; the samtools fixture's WDL
 Such an action consumes no command-line strings and never writes its `dest`, as measured on 2026-10-25 on Python 3.13 to 3.15 and read in the `argparse` source of 3.10 to 3.12: `--hush` alone is accepted and does nothing, `--hush v` is rejected, and a positional so declared consumes nothing.
 The reader declared both as value-taking inputs, rendering `~{"--hush " + hush}` and `~{select_first([hidden, ""])}`, so a caller who set either produced a command line the tool rejects.
 `unpack_tasks` now skips them beside `--help` and `--version`, before `_arguments` groups actions by `dest`: an action sharing a `dest` with `--real` would otherwise rename it after its flag and drop its default, which argparse takes from `--real` alone when `--real` is declared first.
-Declared before `--real`, the skipped action's own default, `None` when it declares none, fills the `dest` instead, since argparse takes the first default that is not `SUPPRESS`, and the task, which declares `--real`'s default, does not reproduce that; no parser seen declares this shape.
+Declared before `--real`, the skipped action's own default, `None` when it declares none, fills the `dest` instead, since argparse takes the first default that is not `SUPPRESS`, and the task, which declared `--real`'s default, did not reproduce that until D31.
 `argparse.SUPPRESS` therefore leaves the positional arity rule, where it was a copy of CPython 3.12's own list.
 Both fixtures, the flagship and `mypy.dmypy.client.parser` generate byte-identical WDL and Nextflow, verified by checksum.
 
@@ -508,6 +508,14 @@ It cannot express `nargs="+"`, since `transpose` rejects ragged rows.
 What the text element loses is the element type: a `type=int` pair is `Array[String]` and checked only by the tool, and a `type=Path` pair is not localized by the engine.
 A value that itself contains a space cannot be passed either, since the placeholders are unquoted and the shell splits it, as it splits every other value.
 On 2026-10-25 the rendered command line parsed back to `[[1, 2], [3, 4]]` under the declaring parser, and `nextflow run` rendered the same line; `tests/test_generate.py` asserts both.
+Both fixtures, the flagship and `mypy.dmypy.client.parser` generate byte-identical WDL and Nextflow, verified by checksum.
+
+**D31** — an input declared the default of a `dest` that argparse fills from an earlier action.
+argparse sets an absent attribute from the first action, in declaration order, whose default is not `SUPPRESS`.
+The reader skipped actions that are no input before reading defaults, so `--ghost`, with `nargs=SUPPRESS`, declared before `--real` with `default="d"`, left argparse's `x` at `None` while the task declared `String x = "d"` and passed `--real d`.
+`argparser._dest_defaults` now reads the rule once over every action of the parser, and an input declares its action's default only where that action fills the `dest`; `_paired_switch`, which applied the rule within its own two actions, uses it too.
+With no input set, the task then passes what the bare tool sees, which `tests/test_generate.py` asserts against `parse_args([])`.
+Over 424 synthetic parsers, output changes only where an action that is no input is declared before another action writing its `dest`; no real parser among the 30 reachable from mypy, miniwdl, torchrun, `build`, numpy's f2py, keyring and `mypy.dmypy.client` has that shape.
 Both fixtures, the flagship and `mypy.dmypy.client.parser` generate byte-identical WDL and Nextflow, verified by checksum.
 
 ### Working on the vendored parser

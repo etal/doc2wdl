@@ -528,6 +528,26 @@ def test_multi_value_arguments_are_arrays_spelled_per_action(check_wdl, wdl_comm
     assert parser.parse_args(command.split()[1:]).window == [[1, 2], [3, 4]]
 
 
+def test_a_default_another_action_fills_first_is_not_declared(check_wdl, wdl_command):
+    """argparse fills a `dest` from the first action whose default is not SUPPRESS.
+
+    An action that is no input still fills its `dest`, so an input declared after
+    it declares no default: with none set, the task passes what the bare tool sees.
+    It used to pass `--real d --no-squash`.
+    """
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("--ghost", dest="x", nargs=argparse.SUPPRESS)
+    parser.add_argument("--real", dest="x", default="d")
+    parser.add_argument("--hushed", dest="squash", nargs=argparse.SUPPRESS)
+    parser.add_argument("--squash", action="store_true")
+    parser.add_argument("--no-squash", dest="squash", action="store_false")
+    wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
+    check_wdl(wdl)
+    assert vars(parser.parse_args([])) == {"x": None, "squash": None}
+    assert wdl_command(wdl) == "tool"
+    assert wdl_command(wdl, x="v", squash=False) == "tool --real v --no-squash"
+
+
 def test_python_defaults_are_spelled_as_wdl_literals(check_wdl, wdl_command):
     """Defaults reach the model as Python values, and the writer spells them."""
     parser = argparse.ArgumentParser(prog="tool", add_help=False)
