@@ -528,6 +528,40 @@ def test_multi_value_arguments_are_arrays_spelled_per_action(check_wdl, wdl_comm
     assert parser.parse_args(command.split()[1:]).window == [[1, 2], [3, 4]]
 
 
+class _StoringAction(argparse.Action):
+    """An action class of the tool's own, which stores what it is given."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
+
+
+def test_an_unmodeled_action_class_renders_what_its_parser_accepts(
+    capsys, check_wdl, wdl_command
+):
+    """An action class the reader does not model is read by its command-line shape.
+
+    Such a class used to raise, which lost the whole document, as mypy's
+    `CapturableVersionAction` did.  argparse reads what any action consumes from
+    its flags and `nargs`, so the flag passes nothing until set.  A `const` of
+    `False` says what the class stores rather than that the flag means false, and
+    the class may compute its default from the environment, so no default is
+    declared.
+    """
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("--flag", action=_StoringAction, nargs=0, const=False)
+    parser.add_argument("--value", action=_StoringAction, default="from-env")
+    parser.add_argument("--pair", action=_StoringAction, nargs=2)
+    wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
+    check_wdl(wdl)
+    assert capsys.readouterr().err.count("_StoringAction") == 3
+    assert "Boolean flag = false\n" in wdl and "String? value\n" in wdl
+    assert wdl_command(wdl) == "tool"
+    command = wdl_command(wdl, flag=True, value="v", pair=["a", "b"])
+    assert command == "tool --flag --value v --pair a b"
+    namespace = parser.parse_args(command.split()[1:])
+    assert (namespace.flag, namespace.value, namespace.pair) == ([], "v", ["a", "b"])
+
+
 def test_a_default_another_action_fills_first_is_not_declared(check_wdl, wdl_command):
     """argparse fills a `dest` from the first action whose default is not SUPPRESS.
 

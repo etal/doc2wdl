@@ -13,9 +13,8 @@ def test_version_is_not_an_input():
 
     `add_help` is left on here, so the one assertion covers both skips.
 
-    Declaring it the idiomatic way used to raise from the reader's `else` branch,
-    which meant a parser as ordinary as `mypy.dmypy.client.parser` produced nothing
-    at all.
+    Declaring it the idiomatic way used to raise, which meant a parser as ordinary
+    as `mypy.dmypy.client.parser` produced nothing at all.
     """
     parser = argparse.ArgumentParser(prog="tool")
     parser.add_argument("--version", action="version", version="1.0")
@@ -27,9 +26,9 @@ def test_version_is_not_an_input():
 def test_bare_const_and_count_flags_are_inputs():
     """`store_const` and `count` are inputs; only help and version are discarded.
 
-    Both reached the same fatal `else` as `--version` and are just as ordinary --
-    `-v` as a count is a common spelling.  Neither takes a value on the command
-    line, which is what distinguishes them from a plain `store`.
+    Both used to raise as `--version` did, and are just as ordinary -- `-v` as a
+    count is a common spelling.  Neither takes a value on the command line, which
+    is what distinguishes them from a plain `store`.
     """
     parser = argparse.ArgumentParser(prog="tool", add_help=False)
     parser.add_argument("--mode", action="store_const", const="fast")
@@ -37,6 +36,51 @@ def test_bare_const_and_count_flags_are_inputs():
     (task,) = argparser.unpack_tasks(parser, "tool")
     assert [arg.name for arg in task["cli_args"]] == ["mode", "verbose"]
     assert not any(arg.option_has_value for arg in task["cli_args"])
+
+
+def test_actions_argparse_defines_are_read_without_a_warning(capsys):
+    """Every action argparse registers is modeled or handled separately.
+
+    An action class missing from the known ones would warn and lose its default,
+    as `--color` would here, though its command line would still be right.  The
+    registry check reports any class a later Python release adds that is not a
+    subclass of a modeled one.
+    """
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("--name", default="d")
+    parser.add_argument("--fast", action="store_true")
+    parser.add_argument("--slow", action="store_false")
+    parser.add_argument("--mode", action="store_const", const="m")
+    parser.add_argument("--tag", action="append")
+    parser.add_argument("--stat", action="append_const", const="s")
+    parser.add_argument("-v", action="count")
+    parser.add_argument("--file", action="extend", nargs="+")
+    parser.add_argument("--color", action=argparse.BooleanOptionalAction, default=True)
+    (task,) = argparser.unpack_tasks(parser, "tool")
+    assert capsys.readouterr().err == ""
+    defaults = {arg.name: arg.default_value for arg in task["cli_args"]}
+    assert (defaults["name"], defaults["color"]) == ("d", True)
+    registered = set(parser._registries["action"].values())
+    assert {
+        cls for cls in registered if not issubclass(cls, argparser._KNOWN_ACTIONS)
+    } == {
+        argparse._HelpAction,
+        argparse._VersionAction,
+        argparse._SubParsersAction,
+    }
+
+
+def test_a_paired_switch_takes_the_default_argparse_fills_its_dest_from():
+    """argparse fills the `dest` from the first action whose default is not SUPPRESS.
+
+    Here that is the second of the pair, so the switch defaults to its True.
+    """
+    parser = argparse.ArgumentParser(prog="tool", add_help=False)
+    parser.add_argument("--squash", action="store_true", default=argparse.SUPPRESS)
+    parser.add_argument("--no-squash", dest="squash", action="store_false")
+    assert parser.parse_args([]).squash is True
+    (task,) = argparser.unpack_tasks(parser, "tool")
+    assert [arg.default_value for arg in task["cli_args"]] == [True]
 
 
 def test_store_false_default_is_not_confused_with_its_const():
@@ -107,16 +151,19 @@ def test_requiredness_of_a_positional_follows_its_arity():
 
 
 def test_an_action_that_consumes_nothing_is_not_an_input():
-    """`nargs=SUPPRESS` takes no value and stores nothing, so it is no input.
+    """An action that consumes no command-line strings is no input.
 
-    As an input, the option rendered `--hush VALUE`, which the tool rejects.  It
-    also must not count among the actions sharing a `dest`: argparse fills `x`
-    from `--real` alone when, as here, `--real` is declared first, so `--real`
-    keeps the `dest`'s name and its default.
+    `nargs=SUPPRESS` takes no value and stores nothing; as an input, the option
+    rendered `--hush VALUE`, which the tool rejects.  A positional `store_true`,
+    which argparse accepts, consumes nothing too, and used to raise.  Neither may
+    count among the actions sharing a `dest`: argparse fills `x` from `--real`
+    alone when, as here, `--real` is declared first, so `--real` keeps the `dest`'s
+    name and its default.
     """
     parser = argparse.ArgumentParser(prog="tool", add_help=False)
     parser.add_argument("--hush", nargs=argparse.SUPPRESS)
     parser.add_argument("hidden", nargs=argparse.SUPPRESS)
+    parser.add_argument("flag", action="store_true")
     parser.add_argument("--real", dest="x", default="d")
     parser.add_argument("--ghost", dest="x", nargs=argparse.SUPPRESS)
     (task,) = argparser.unpack_tasks(parser, "tool")

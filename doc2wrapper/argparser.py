@@ -2,10 +2,29 @@
 """Take a populated ArgumentParser, unpack it, and populate the task object model."""
 
 import argparse
+import sys
 from dataclasses import replace
 from pathlib import Path
 
 from .tasktree import Argument, legal_name, task_title, type_and_default
+
+#: The argparse action classes that store a value for the tool to see, whose
+#: defaults are therefore what the tool sees when the option is absent;
+#: argparse's own help, version and subparsers actions never reach this tuple,
+#: since `unpack_tasks` handles them first.  Three of these also say more of the
+#: command line than `option_strings` and `nargs` do: `append` repeats its flag
+#: per value, `BooleanOptionalAction` adds a negated spelling, and `store_true`
+#: and `store_false`, which are `_StoreConstAction` with `const` True and False,
+#: state which spelling means true.  Any other action is read by its command-line
+#: shape alone.
+_KNOWN_ACTIONS = (
+    argparse._StoreAction,
+    argparse._StoreConstAction,
+    argparse._AppendAction,
+    argparse._AppendConstAction,
+    argparse._CountAction,
+    argparse.BooleanOptionalAction,
+)
 
 
 def unpack_tasks(arg_parser, prog):
@@ -25,7 +44,10 @@ def unpack_tasks(arg_parser, prog):
 
     If an ArgumentParser contains no options/arguments other than a "--help" and/or
     "--version" option and/or subcommands, it won't be yielded as a task; only the
-    subcommands (if any) will be yielded.
+    subcommands (if any) will be yielded.  The skip reads the action class, so a
+    version flag declared with an action class of the tool's own is a switch like
+    any other flag, and does yield a task.  Each action of such a class is
+    reported with a warning on standard error.
 
     If there are no normal arguments/options, emit nothing (no tasks, empty iterable).
 
@@ -40,19 +62,24 @@ def unpack_tasks(arg_parser, prog):
         "cli_prefix": prog,
         "has_output_file": False,
     }
-    handled = []
+    inputs = []
     for action in arg_parser._actions:
         # `--help` and `--version` describe the tool, not its inputs -- the rule
         # `docopter._SKIPPED_OPTIONS` applies to help text.  Not shared as one list:
-        # a live parser states the intent in the action class, never in a spelling,
-        # which is why a `-v` spelled version flag is skipped here and deliberately
-        # is not there, where it means "verbose" as often as "version".
+        # argparse's own help and version classes state the intent, where a
+        # spelling does not, which is why a `-v` spelled version flag is skipped
+        # here and deliberately is not there, where it means "verbose" as often as
+        # "version".
         if isinstance(action, (argparse._HelpAction, argparse._VersionAction)):
             continue
-        # `nargs=SUPPRESS` consumes no command-line strings and never writes its
-        # `dest`, so the action is no input.  Skipped here rather than in
-        # `_arguments`, which must not count it among the actions sharing a `dest`.
-        if action.nargs == argparse.SUPPRESS:
+        # `nargs=SUPPRESS`, or `nargs=0` on a positional, as a positional
+        # `store_true` or an action class of the tool's own has, consumes no
+        # command-line strings, so the action is no input.  Skipped here rather
+        # than in `_arguments`, which must not count it among the actions sharing
+        # a `dest`.
+        if action.nargs == argparse.SUPPRESS or (
+            action.nargs == 0 and not action.option_strings
+        ):
             continue
 
         if isinstance(action, argparse._SubParsersAction):
@@ -60,25 +87,25 @@ def unpack_tasks(arg_parser, prog):
                 yield from unpack_tasks(sub_ap, f"{prog} {cmd_name}")
             continue
 
-        if isinstance(
-            action,
-            (
-                argparse._StoreAction,
-                # _StoreConstAction covers store_true and store_false, which are it
-                # with const=True/False, default the negation, and nargs=0.
-                argparse._StoreConstAction,
-                argparse._AppendAction,
-                argparse._AppendConstAction,
-                argparse._CountAction,
-                argparse.BooleanOptionalAction,
-            ),
-        ):
-            handled.append(action)
-        else:
-            raise TypeError(f"What is this? {action} :: {type(action)}")
+        # argparse reads what an action consumes from `option_strings` and `nargs`
+        # alone, whatever its `__call__` then does, so an action class the reader
+        # does not model still has a command line: `nargs=0` is a flag to pass and
+        # anything else takes values.  What it does with them is not modeled, so
+        # its default is not declared either; such a class may compute it from
+        # the environment.
+        if not isinstance(action, _KNOWN_ACTIONS):
+            cls = type(action)
+            print(
+                f"Warning: '{(action.option_strings or [action.dest])[-1]}' is"
+                f" declared with the action class '{cls.__module__}.{cls.__qualname__}',"
+                " so the task passes it by its command-line shape alone, without its"
+                " default.",
+                file=sys.stderr,
+            )
+        inputs.append(action)
 
     task_kwargs["cli_args"] = list(
-        _arguments(handled, _dest_defaults(arg_parser._actions))
+        _arguments(inputs, _dest_defaults(arg_parser._actions))
     )
     if task_kwargs["cli_args"]:
         yield task_kwargs
@@ -104,7 +131,7 @@ def _dest_defaults(actions):
 
 
 def _arguments(actions, filling):
-    """Model the handled actions in source order, given which share a `dest`.
+    """Model the input actions in source order, given which share a `dest`.
 
     Several actions may write one `dest`.  A `store_true` and a `store_false` doing
     so are one switch with a spelling for each value, which is how the model
@@ -117,9 +144,10 @@ def _arguments(actions, filling):
     which for a `BooleanOptionalAction` is its negation.  A switch with a single
     spelling so named means "pass this flag", whatever value it stores, so that
     its name and its value agree: a `store_false` spelled `-q` becomes an input `q`
-    that passes `-q` when true.  None of these flag-named inputs carries its
-    action's default, because argparse fills the `dest` from one action's default
-    alone, so each defaults to passing nothing and the tool's own default stands.
+    that passes `-q` when true.  None of these flag-named inputs declares its
+    action's default, not even the one `filling` names, since each is passed on
+    its own, so each defaults to passing nothing and the tool's own default
+    stands.
     An input of its own declares its action's default only where `filling`, from
     `_dest_defaults`, names that action.
     """
@@ -135,7 +163,8 @@ def _arguments(actions, filling):
             if action is group[0]:
                 yield _paired_switch(group, dest_name, filling.get(action.dest))
         else:
-            arg = _argument(action, dest_name)
+            # The default types the input, although this branch declares none.
+            arg = _argument(action, dest_name, True)
             if arg.false_flag and not arg.option_flag:
                 arg = replace(arg, option_flag=arg.false_flag, false_flag="")
             # A switch with one spelling is passed or not, as a `count` is; one
@@ -188,16 +217,19 @@ def _paired_switch(group, name, filler):
     )
 
 
-def _argument(action, name, carries_default=True):
-    """The model of one handled argparse action, under the given input name.
+def _argument(action, name, carries_default):
+    """The model of one input action, under the given input name.
 
-    `carries_default` is false where argparse fills the `dest` from another
-    action's default.
+    `carries_default` is false where the model must not declare the action's
+    default; a caller needing it only to type the input passes true and replaces
+    `default_value` itself.
     """
     # SUPPRESS leaves the attribute absent from the namespace: there is no value.
     default = (
         action.default
-        if carries_default and action.default is not argparse.SUPPRESS
+        if carries_default
+        and isinstance(action, _KNOWN_ACTIONS)
+        and action.default is not argparse.SUPPRESS
         else None
     )
     if action.nargs == 0:
@@ -311,12 +343,14 @@ def _switch(action, default):
         negated = [s for s in action.option_strings if s in generated]
         affirmative = [s for s in action.option_strings if s not in generated]
         return affirmative[-1], negated[-1] if negated else "", default
-    if isinstance(action.const, bool):
+    if isinstance(action, _KNOWN_ACTIONS) and isinstance(action.const, bool):
         # store_true and store_false: the flag stores its const.
         flag = action.option_strings[-1]
         return (flag, "", default) if action.const else ("", flag, default)
-    # count, store_const and append_const store something other than a Boolean.
-    # The input means "pass the flag", and leaving it out is what the parser does
-    # when the option is absent, whatever `default` records.  A count therefore
-    # passes its flag at most once.
+    # count, store_const and append_const store something other than a Boolean,
+    # and the const of an action class the reader does not model says what it
+    # stores rather than which spelling means true.  The input means "pass the
+    # flag", and leaving it out is what the parser does when the option is
+    # absent, whatever `default` records.  A count therefore passes its flag at
+    # most once.
     return action.option_strings[-1], "", False

@@ -196,6 +196,8 @@ A `required=True` `store_true` declares `Boolean x = false`, so a caller may omi
 
 An option whose every occurrence may take more than one value, such as `append` with `nargs=2`, is an array of text in which each element is one occurrence, its values separated by spaces, so `["a b", "c d"]` passes `--pair a b --pair c d`; the element is text whatever `type` declares, so a `type=Path` pair is not localized, and a value that itself contains a space cannot be passed.
 An action with `nargs=SUPPRESS` consumes nothing and is no input, so a `required=True` option of that kind, which argparse still demands, is left out.
+An action class the reader does not model, which a tool defines for itself as mypy does for `--version`, is read by its command-line shape: a flag that takes no value passes when set, and any other takes values as a `store` option does, without its default, and with a warning on standard error naming the class.
+So a version flag declared with such a class is an input, `Boolean version_ = false` in mypy's task, and a class that takes several values per occurrence is read as `store` is, without the grouping `append` has.
 
 ### What the Nextflow writer emits
 
@@ -516,6 +518,24 @@ The reader skipped actions that are no input before reading defaults, so `--ghos
 `argparser._dest_defaults` now reads the rule once over every action of the parser, and an input declares its action's default only where that action fills the `dest`; `_paired_switch`, which applied the rule within its own two actions, uses it too.
 With no input set, the task then passes what the bare tool sees, which `tests/test_generate.py` asserts against `parse_args([])`.
 Over 424 synthetic parsers, output changes only where an action that is no input is declared before another action writing its `dest`; no real parser among the 30 reachable from mypy, miniwdl, torchrun, `build`, numpy's f2py, keyring and `mypy.dmypy.client` has that shape.
+Both fixtures, the flagship and `mypy.dmypy.client.parser` generate byte-identical WDL and Nextflow, verified by checksum.
+
+**D32** — an action class the reader did not model stopped the whole document.
+`unpack_tasks` handled a fixed tuple of action classes and raised `TypeError` on any other, so mypy's parser, whose `-V/--version` uses its own `CapturableVersionAction`, produced no task, and neither did miniwdl's or torchrun's.
+argparse reads what an action consumes from its option strings and `nargs` alone, whatever the class's `__call__` does with the values, so such an action now has the input its shape gives: a flag with `nargs=0` passes when set, and any other takes values as a `store` option does.
+The tuple, now `argparser._KNOWN_ACTIONS`, keeps argparse's action classes that store a value for the tool to see, whose defaults are therefore what the tool sees; argparse's own help, version and subparsers actions are handled before the tuple is consulted, and a test checks the tuple against argparse's registry of action classes.
+Three of the tuple's classes also say more of the command line than `option_strings` and `nargs` do: `append` repeats its flag, `BooleanOptionalAction` adds a negated spelling, and `store_true` and `store_false` state which spelling means true.
+The `const` of another class says what it stores, so a `nargs=0` flag passes when set even where its `const` is `False`.
+No default of such a class is declared, because the class may compute it: torchrun's options read theirs from environment variables, and with `PET_NNODES=4:4` set, the input stays `String? nnodes` rather than declaring `4:4`.
+Each such action prints a warning on standard error naming its flag and its class.
+Skipping version and help flags declared with a class of the tool's own was not adopted, because no attribute marks them.
+The packages in the `dev` and `cnvkit` environments define 28 action classes for themselves, one of them fontTools' subclass of argparse's own help action, and of their version flags mypy's `CapturableVersionAction` has a `version` attribute and `default=SUPPRESS` while miniwdl's `PipVersionAction` has neither.
+A live option's `dest` is never `SUPPRESS`, since `add_argument` derives it from the option strings, and `default=SUPPRESS` is also what traitlets gives every ordinary switch through `argument_default`, all 25 `_FlagAction` switches in ipykernel's parser among them.
+So mypy's task declares `Boolean version_ = false`, which passes `--version` only when set.
+A parser holding only help, such a version flag and subcommands now yields a task for the version flag too, as miniwdl's does: `miniwdl ~{if version_ then "--version" else ""}`.
+Skipping unknown actions instead would have dropped the 27 of torchrun's 31 inputs whose actions warn.
+A positional with `nargs=0`, which argparse accepts from a `store_true` or from a class of the tool's own, consumes nothing and is skipped as `nargs=SUPPRESS` is; it used to raise `IndexError`.
+On 2026-10-25 mypy's parser generated one task of 126 inputs, miniwdl's 11 tasks and torchrun's one task of 31 inputs, and each document passed `miniwdl check` and `nextflow lint`.
 Both fixtures, the flagship and `mypy.dmypy.client.parser` generate byte-identical WDL and Nextflow, verified by checksum.
 
 ### Working on the vendored parser

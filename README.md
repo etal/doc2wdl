@@ -73,3 +73,4 @@ A Cobra heading that reads `USAGE` without a colon is not found at all.
 None of that applies to the `argparse` subcommand, which introspects the parser object directly and parses no text.
 It is the better route for a Python tool: it emits one document for a parser with subcommands.
 A default that does not fit its argument's declared `type`, such as a float default of an `int` option, is dropped rather than declared, so the generated task leaves that option unset.
+An option declared with an action class of the tool's own is passed by its command-line shape alone, without its default, and with a warning naming the class; a version flag declared that way, as mypy's is, becomes a switch like any other.
