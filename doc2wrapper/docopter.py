@@ -52,8 +52,10 @@ _PATTERN_SYMBOL = re.compile(r"([\[\]\(\)\|]|\.\.\.)")
 
 # A placeholder followed by a repetition of itself, as argparse writes the value of
 # an `nargs="+"` option, `NORMAL [NORMAL ...]`, in an options-block entry's flags.
-# The placeholder may be attached to its flag with `=`, as in `--normal=N [N ...]`.
-_REPEATED_VALUE = re.compile(r"(?<![^\s=])([^\s\[\]-]\S*) \[\1 \.\.\.\]")
+# The placeholder may be attached to a long flag with `=`, as in
+# `--normal=N [N ...]`, which `parse_long` reads as one token, but not to a short
+# flag: `parse_shorts` reads `-n=N` as a stack of letters.
+_REPEATED_VALUE = re.compile(r"(?:^|\s|--[^\s=]+=)([^\s\[\]-]\S*) \[\1 \.\.\.\]")
 
 # A bracketed optional part inside a flag's name, as in `--region[s]-file`, and
 # what a flag is: one or two hyphens and a name of word characters, which may hold
@@ -642,13 +644,17 @@ def _synopsis_valued_options(formal, options):
     ``=`` or a short flag of one letter, is directly followed by a placeholder:
     a token `parse_atom` reads as an argument, angle-bracketed or in capitals.
 
-    Because the value it takes is a token that would otherwise be a positional,
-    the rule never decides whether a synopsis parses: never a bracket, a bar or a
-    command word, which an option given a value before `parse_pattern` would take
-    where it is followed by one, as D27 measured on slop's ``(-l and -r)``.  For
-    the same reason a short flag whose letter ends a stack of letters, as ``z``
-    ends ``-pz``, takes none, since the stack would take the token after it.
+    The value it takes is a token that would otherwise be a positional, never a
+    bracket, a bar or a command word, so the rule never stops a synopsis from
+    parsing.  A value read from an option's description could: given one, bedtools
+    slop's ``-r`` would take the ``)`` of ``(-l and -r)``.  For the same reason a
+    short flag whose letter ends a stack of letters, as ``z`` ends ``-pz``, takes
+    none, since the stack would take the token after it.
 
+    A placeholder followed by ``...`` stays a positional, so that ``-i <file>...``
+    keeps its list, which nothing reads from a repeated option.  A flag that
+    `_passable_flag` rejects, such as absl's ``--apilog:``, takes no value either,
+    since `transform` leaves such an option out and its value would go with it.
     A flag whose spelling matches a documented option only once the notation that
     `_passable_flag` removes is removed, as git's synopsis names ``--trailer`` and
     its entry ``--[no-]trailer <trailer>``, takes a value only where that option
@@ -662,11 +668,13 @@ def _synopsis_valued_options(formal, options):
                 declared.add(flag)
                 twins.setdefault(_passable_flag(flag), opt.argcount)
     followed = {}
-    for token, after in zip(tokens, [*tokens[1:], ""]):
+    for index, token in enumerate(tokens):
+        value, repeat = [*tokens[index + 1 : index + 3], "", ""][:2]
         long = token.startswith("--") and token != "--" and "=" not in token
         short = len(token) == 2 and token[0] == "-" and token[1] != "-"
         if (long or short) and token not in declared:
-            followed[token] = followed.get(token, True) and _is_placeholder(after)
+            valued = _is_placeholder(value) and repeat != "..."
+            followed[token] = followed.get(token, True) and valued
     stacked = {
         "-" + token[-1]
         for token in tokens
@@ -677,7 +685,10 @@ def _synopsis_valued_options(formal, options):
         if flag.startswith("--")
         else docopt.Option(flag, None, 1)
         for flag, always in followed.items()
-        if always and flag not in stacked and twins.get(flag, 1) == 1
+        if always
+        and flag not in stacked
+        and twins.get(flag, 1) == 1
+        and _passable_flag(flag) is not None
     ]
 
 

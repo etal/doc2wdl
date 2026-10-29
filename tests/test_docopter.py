@@ -910,12 +910,16 @@ def test_an_undocumented_flag_before_a_placeholder_takes_it_as_its_value(
         ("[-x <n>] [-x word]", [["<n>"], ["word"]]),
         # `-pz` would give the token after it to `-z`.
         ("-z <x> -pz run", [["<x>"], ["run"]]),
+        # A repeated option would lose the list.
+        ("-i <file>...", [["<file>"]]),
+        # `transform` leaves out a flag written in notation, and its value with it.
+        ("--apilog: <path> <in>", [["<path>"], ["<in>"]]),
     ],
 )
-def test_a_flag_takes_no_value_unless_every_occurrence_is_followed_by_one(
+def test_a_synopsis_flag_takes_no_value_where_a_positional_would_be_lost(
     synopsis, spellings
 ):
-    """Only a token that would otherwise be a positional becomes a value."""
+    """Only a token that would otherwise be a positional, and stay one, is a value."""
     positionals = docopter.parse(f"Usage: tool {synopsis}\n").positionals
     assert [p.spellings for p in positionals] == spellings
 
