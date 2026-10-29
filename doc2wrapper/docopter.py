@@ -248,11 +248,8 @@ def _synopsis(doc, printable):
 def transform(usage, cli_prefix, positionals, options):
     """Prepare CLI values for interpolation.
 
-    Args:
-        usage: usage text, as returned by `parse`
-        cli_prefix: the command words the task invokes, as returned by `parse`
-        positionals: list of `Positional`, as returned by `parse`
-        options: list of docopt ``Option``, as returned by `parse`
+    Args: the fields of the `ParsedHelp` that `parse` returns, in its order, so
+        that ``transform(*parse(doc))`` reads a help text.
 
     Return: a dictionary of template keyword arguments, carrying
 
@@ -410,6 +407,7 @@ def _one_per_flag(options, flags):
     ``-p, --indicator-style=slash`` beside ``--indicator-style=WORD``, passes the
     same long flag and is left out like any other: passing its short flag instead
     would keep the value its entry reads, and ``ls -p slash`` names a file.
+
     `flags` holds each option's passable flag, None where it has none; such options
     and skipped ones take part in no choice.  Options passing different flags are
     never merged, even where their input names would coincide.
@@ -508,6 +506,10 @@ def _read_command_line(printable, usage, options):
     rule.  The options the synopsis alone names follow the documented ones in the
     order the tree first names them, and an option the tree never names, because a
     value-taking option before it took it as its value, is dropped.
+
+    A slot that every alternative writes as a choice group, as `_CHOICE_GROUP`
+    matches, is left out with a warning on standard error, since it names no
+    argument.
 
     A usage line that parses as written is not rewritten, except that the
     repetition `_without_value_repeats` describes is removed beforehand; one that
@@ -764,12 +766,12 @@ def _without_value_repeats(formal, options):
 def _valued_options(tokens, options):
     """Yield each option among `tokens` that takes a value, and its value's index.
 
-    The scan runs on a copy of `options`, so that the caller's list, which
-    `parse_pattern` then appends to, receives no option from it.  The scan registers
-    long options only, so sharing the list would place every long option the
-    synopsis alone names ahead of every such short option, rather than in the order
-    the synopsis gives.  The token an option reads as its value is never an option
-    itself, so the scan passes over it.
+    The scan runs on a copy of `options`, so that the caller's list receives no
+    option from it: its registrations model `parse_long`'s bookkeeping rather than
+    options the help text documents, and `_synopsis_valued_options` reads the
+    caller's list as what the options block documents, so a registration there
+    would change which flags take a value.  The token an option reads as its value
+    is never an option itself, so the scan passes over it.
     """
     known = options[:]
     index = 0
@@ -845,7 +847,7 @@ def _documented_options(doc, synopsis):
     ``--verbose``, which clap writes for a flag counted each time it is passed.
     Each option also records the placeholder its flags repeat, as argparse writes
     the value of an ``nargs="+"`` option as ``NORMAL [NORMAL ...]``, or None, and as
-    ``attached`` whether its flags write its flag with a value attached by ``=``.
+    ``attached`` whether the entry writes its flag with a value attached by ``=``.
     """
     options = []
     for entry, description in _option_entries(doc, synopsis):

@@ -893,8 +893,8 @@ def test_an_undocumented_flag_before_a_placeholder_takes_it_as_its_value(
 ):
     """bedtools writes `-a <bed>` and documents no `-a`, so the placeholder was an input.
 
-    argparse 3.13 writes `--log-dir, --log_dir LOG_DIR`, whose entry keeps only the
-    last long spelling, so the synopsis's is undocumented too.
+    Python 3.13's argparse writes `--log-dir, --log_dir LOG_DIR`, whose entry keeps
+    only the last long spelling, so the synopsis's is undocumented too.
     """
     task = docopter.transform(*docopter.parse(f"Usage: tool {flag} {value} <in>\n"))
     assert capsys.readouterr().err == ""
@@ -960,7 +960,7 @@ def test_synopsis_options_keep_the_order_the_synopsis_names_them():
     ]
 
 
-def test_a_synopsis_that_does_not_parse_is_read_as_without_synopsis_values(capsys):
+def test_a_synopsis_that_does_not_parse_keeps_the_options_it_first_read(capsys):
     """The options are those the first reading registered before it failed."""
     assert options_of("Usage: tool -a <x> (\n") == [("-a", None, 0, False)]
     assert "unmatched '('" in capsys.readouterr().err
@@ -1070,9 +1070,10 @@ def test_a_sentence_opening_with_a_positionals_name_is_no_entry(line, descriptio
     "synopsis", ["tool {check,register,upload}", "tool [-v] {run,r,list} ..."]
 )
 def test_a_choice_among_literal_words_is_no_input(synopsis, capsys):
-    """argparse writes a subparsers action, or `choices=` without a metavar, so.
+    """argparse writes a subparsers action as a brace group, `{run,r,list}`.
 
-    The slot names no argument, and its identifier would concatenate the choices.
+    So it writes a `choices=` positional without a metavar.  The slot names no
+    argument, and its identifier would concatenate the choices.
     """
     assert docopter.parse(f"Usage: {synopsis}\n").positionals == []
     assert "a choice among literal words" in capsys.readouterr().err
