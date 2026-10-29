@@ -518,7 +518,8 @@ def _read_command_line(printable, usage, options):
         docopt.formal_usage(_CONTINUATION.sub("", printable)), options
     )
     valued = _synopsis_valued_options(formal, options)
-    for reading in ([[*options, *valued]] if valued else []) + [options]:
+    readings = [[*options, *valued], options] if valued else [options]
+    for reading in readings:
         try:
             pattern = _read_pattern(formal, reading)
         except docopt.DocoptLanguageError as error:
@@ -654,11 +655,11 @@ def _synopsis_valued_options(formal, options):
     does, since `transform` passes the flag from the documented option.
     """
     tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
-    declared = {flag for opt in options for flag in (opt.short, opt.long) if flag}
-    twins = {}
+    declared, twins = set(), {}
     for opt in options:
         for flag in (opt.short, opt.long):
             if flag:
+                declared.add(flag)
                 twins.setdefault(_passable_flag(flag), opt.argcount)
     followed = {}
     for token, after in zip(tokens, [*tokens[1:], ""]):
@@ -676,7 +677,7 @@ def _synopsis_valued_options(formal, options):
         if flag.startswith("--")
         else docopt.Option(flag, None, 1)
         for flag, always in followed.items()
-        if always and flag not in stacked and twins.get(flag, 1)
+        if always and flag not in stacked and twins.get(flag, 1) == 1
     ]
 
 
@@ -727,20 +728,20 @@ def _without_value_repeats(formal, options):
     parsing.  The text is returned unchanged where no group is removed.
     """
     tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    # An option `_value_taker` registered from the synopsis has no entry and so no
+    # `repeated`.
     values = [
-        (option, tokens[value], value)
+        (getattr(option, "repeated", None), tokens[value], value)
         for option, value in _valued_options(tokens, options)
     ]
     for index, token in enumerate(tokens):
         long, _eq, attached = token.partition("=")
         if long.startswith("--") and attached:
-            documented = (option for option in options if option.long == long)
-            values.append((next(documented, None), attached, index))
+            repeated = (option.repeated for option in options if option.long == long)
+            values.append((next(repeated, None), attached, index))
     removed = set()
-    for option, placeholder, end in values:
-        # An option `_value_taker` registered from the synopsis has no entry and so
-        # no `repeated`, and a long option the options block does not name is None.
-        if placeholder != getattr(option, "repeated", None):
+    for repeated, placeholder, end in values:
+        if placeholder != repeated:
             continue
         if tokens[end + 1 : end + 5] == ["[", placeholder, "...", "]"]:
             removed.update(range(end + 1, end + 5))
