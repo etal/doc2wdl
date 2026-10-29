@@ -538,6 +538,12 @@ A positional with `nargs=0`, which argparse accepts from a `store_true` or from 
 On 2026-10-25 mypy's parser generated one task of 126 inputs, miniwdl's 11 tasks and torchrun's one task of 31 inputs, and each document passed `miniwdl check` and `nextflow lint`.
 Both fixtures, the flagship and `mypy.dmypy.client.parser` generate byte-identical WDL and Nextflow, verified by checksum.
 
+**D33** — a repeated option value attached with `=` was not read as a list.
+D22 reads argparse's `-n N [N ...]` as one option taking a list, but help written by hand may attach the value, as in `--normal=N [N ...]`.
+The entry's repeated placeholder had to follow whitespace, and `_valued_options` gives no value to a long option whose token carries `=`, since `parse_long` reads such a value as attached, so the synopsis yielded an array positional `N` beside a scalar `--normal`.
+The entry's placeholder may now follow `=`, and `_without_value_repeats` also removes the repetition after a long option whose value is attached, where the options block records that option as repeating the same placeholder.
+argparse never writes this form, and none of the 196 help texts, recaptured on 2026-10-29 with the same commands as on 2026-10-24, has it, so no record changes.
+
 ### Working on the vendored parser
 
 `doc2wrapper/_docopt.py` is docopt 0.6.2 with every definition of the runtime argv-matching path deleted whole, and `parse_defaults` with it, and nothing else changed except two regex literals that gained the `r` prefix they always needed.

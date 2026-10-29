@@ -378,19 +378,22 @@ def test_a_group_that_is_not_one_placeholder_keeps_its_brackets(group, capsys):
 
 @pytest.mark.parametrize("retried", ["", " [-p [P]]"])
 @pytest.mark.parametrize(
-    "spelled", ["-n N [N ...]", "--normal N [N ...]", "-vn N [N ...]"]
+    "spelled",
+    ["-n N [N ...]", "--normal N [N ...]", "-vn N [N ...]", "--normal=N [N ...]"],
 )
-def test_a_repeated_option_value_is_the_options_list(spelled, retried):
+@pytest.mark.parametrize("attached", [" ", "="])
+def test_a_repeated_option_value_is_the_options_list(spelled, retried, attached):
     """argparse writes `nargs="+"` as `-n N [N ...]`; the repetition is the option's.
 
     Without `[-p [P]]`, the synopsis parses as written, so no retry reaches the
     group.  The option's entry, which repeats its placeholder too, marks the option
-    a list.
+    a list.  Help written by hand may attach the value with `=`, in the synopsis or
+    in the entry.
     """
     doc = (
         f"usage: tool [-h] [-v] [{spelled}]{retried} <in>\n\noptions:\n"
         "  -v               Be loud.\n"
-        "  -n, --normal N [N ...]\n                   Normal samples.\n"
+        f"  -n, --normal{attached}N [N ...]\n                   Normal samples.\n"
         "  -p [P]           Processes.\n"
     )
     task = docopter.transform(*docopter.parse(doc))

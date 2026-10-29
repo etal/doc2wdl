@@ -52,7 +52,8 @@ _PATTERN_SYMBOL = re.compile(r"([\[\]\(\)\|]|\.\.\.)")
 
 # A placeholder followed by a repetition of itself, as argparse writes the value of
 # an `nargs="+"` option, `NORMAL [NORMAL ...]`, in an options-block entry's flags.
-_REPEATED_VALUE = re.compile(r"(?<!\S)([^\s\[\]-]\S*) \[\1 \.\.\.\]")
+# The placeholder may be attached to its flag with `=`, as in `--normal=N [N ...]`.
+_REPEATED_VALUE = re.compile(r"(?<![^\s=])([^\s\[\]-]\S*) \[\1 \.\.\.\]")
 
 # A bracketed optional part inside a flag's name, as in `--region[s]-file`, and
 # what a flag is: one or two hyphens and a name of word characters, which may hold
@@ -590,7 +591,9 @@ def _without_value_repeats(formal, options):
     as its value, so ``[NORMAL ...]`` would be an optional list of positionals.
     The group is removed only where the option's options-block entry repeats the
     same placeholder, as its ``repeated`` records, because BSD find writes
-    ``-f path [path ...]`` for an option followed by a list of positionals.
+    ``-f path [path ...]`` for an option followed by a list of positionals.  A long
+    option may also carry its value attached, as in ``--normal=N [N ...]``, which
+    `parse_long` reads as one token, so the group follows that token.
 
     Unlike `_without_value_brackets`, this runs before the first reading, since
     the synopsis parses as written.  Removing a whole bracketed group leaves every
@@ -598,15 +601,23 @@ def _without_value_repeats(formal, options):
     parsing.  The text is returned unchanged where no group is removed.
     """
     tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    values = [
+        (option, tokens[value], value)
+        for option, value in _valued_options(tokens, options)
+    ]
+    for index, token in enumerate(tokens):
+        long, _eq, attached = token.partition("=")
+        if long.startswith("--") and attached:
+            documented = (option for option in options if option.long == long)
+            values.append((next(documented, None), attached, index))
     removed = set()
-    for option, value in _valued_options(tokens, options):
-        placeholder = tokens[value]
+    for option, placeholder, end in values:
         # An option `_value_taker` registered from the synopsis has no entry and so
-        # no `repeated`.
+        # no `repeated`, and a long option the options block does not name is None.
         if placeholder != getattr(option, "repeated", None):
             continue
-        if tokens[value + 1 : value + 5] == ["[", placeholder, "...", "]"]:
-            removed.update(range(value + 1, value + 5))
+        if tokens[end + 1 : end + 5] == ["[", placeholder, "...", "]"]:
+            removed.update(range(end + 1, end + 5))
     if not removed:
         return formal
     return " ".join(token for i, token in enumerate(tokens) if i not in removed)
