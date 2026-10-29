@@ -1025,6 +1025,25 @@ def test_prose_opening_with_a_positionals_name_is_no_entry():
     assert positionals[0].description == ""
 
 
+@pytest.mark.parametrize(
+    "synopsis", ["tool {check,register,upload}", "tool [-v] {run,r,list} ..."]
+)
+def test_a_choice_among_literal_words_is_no_input(synopsis, capsys):
+    """argparse writes a subparsers action, or `choices=` without a metavar, so.
+
+    The slot names no argument, and its identifier would concatenate the choices.
+    """
+    assert docopter.parse(f"Usage: {synopsis}\n").positionals == []
+    assert "a choice among literal words" in capsys.readouterr().err
+
+
+def test_a_slot_another_alternative_names_with_a_placeholder_is_kept(capsys):
+    """Only a slot that every alternative writes as a choice group is left out."""
+    positionals = docopter.parse("Usage: tool {a,b}\n       tool <y>\n").positionals
+    assert [p.spellings for p in positionals] == [["{a,b}", "<y>"]]
+    assert capsys.readouterr().err == ""
+
+
 def test_an_option_only_in_the_synopsis_has_no_description():
     """The usage line can name a flag the options block never documents."""
     doc = "Usage: tool [--extra] [-g N] <in>\n\nOptions:\n  -g N  Gain.\n"

@@ -564,6 +564,15 @@ Each of the 54 distinct subcommand and flag pairs given a value, passed to the b
 Every changed document passes `miniwdl check` and `nextflow lint`, and both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
 Not covered: a placeholder after a group of alternative flags, as git-commit writes `(-c | -C | --squash) <commit>`, where `-c` takes the bar as its value; an optional prefix before the placeholder, as in `--fixup [(amend|reword):]<commit>`; a single-dash flag of several letters, such as bedtools' `-fi <fasta>`, which docopt reads as a stack; and a lowercase placeholder, such as BSD's `-f file`, which docopt reads as a command word, as it reads a subcommand.
 
+**D35** — a choice group was an input.
+argparse writes the subcommands of a subparsers action, and the values of a positional declared with `choices=` and no `metavar`, as a brace group, `{batch,target,...}`, which docopt reads as one placeholder, so cnvkit's top level declared a required `Array[File]+` named after every subcommand at once, and D28 then gave it the whole subcommand list as its description.
+`_read_command_line` now leaves out a slot that every alternative writes as a brace group, with a warning on standard error, as the argparse reader never declares a subparsers action an input; a slot that another alternative writes as a placeholder is kept.
+A brace group is notation, so it is recognized as written: argparse's `metavar="COMMAND"`, as conda writes, removes the braces from the synopsis and the entry alike, and `COMMAND` is still read as a positional, with the subcommand list as its description.
+Ending a positional's description at deeper lines laid out as entries was considered and not adopted: it would reach conda's `COMMAND` too, but argparse writes an aliased subcommand as `run (r)` with one space, so a `word  text` rule leaves part of tox's list, and the same rule applied to option entries would cut descriptions where prose has two spaces after a sentence.
+Over the 196 help texts, five records change and no outcome class, CLI prefix or option moves: `cnvkit.py`, `miniwdl`, tox and twine each lose the slot, and torchrun loses two `--start-method` and `--numa-binding` values the reader cannot attribute to their options; 504 positionals become 498.
+twine's `{check,register,upload}` is a required argument, so its task can no longer name the command, and the warning says so.
+Every changed document passes `miniwdl check` and `nextflow lint`, and both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
+
 ### Working on the vendored parser
 
 `doc2wrapper/_docopt.py` is docopt 0.6.2 with every definition of the runtime argv-matching path deleted whole, and `parse_defaults` with it, and nothing else changed except two regex literals that gained the `r` prefix they always needed.

@@ -89,6 +89,11 @@ _CONTINUATION = re.compile(r"^[ \t]*or:(?=[ \t]|$)", re.IGNORECASE | re.MULTILIN
 # section that carries none of it as prose or a heading, not as a wrapped synopsis.
 _NOTATION = re.compile(r"[\[\](){}<>|]|\.\.\.|(?<!\S)-")
 
+# A choice among literal words, as argparse writes the values of a positional
+# declared with `choices=`, and so the subcommands of a subparsers action, as in
+# `{batch,target,...}`.  `_read_command_line` reads such a slot as no input.
+_CHOICE_GROUP = re.compile(r"\{[^{}]*\}")
+
 
 class UsageNotFound(Exception):
     """The help text has no single ``usage:`` section to read a command line from."""
@@ -539,7 +544,18 @@ def _read_command_line(printable, usage, options):
             file=sys.stderr,
         )
     dropped = {id(node) for lead in leads for node in lead[:count]}
-    return prefix, _positionals_of(pattern, dropped)
+    positionals = []
+    for slot in _positionals_of(pattern, dropped):
+        if all(_CHOICE_GROUP.fullmatch(spelling) for spelling in slot.spellings):
+            print(
+                f"Warning: the usage line writes '{slot.spellings[0]}', a choice "
+                "among literal words rather than an argument, so the task leaves "
+                "it out.",
+                file=sys.stderr,
+            )
+            continue
+        positionals.append(slot)
+    return prefix, positionals
 
 
 def _lead_commands(alternative):
