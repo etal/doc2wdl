@@ -886,13 +886,15 @@ def _option_entries(doc, synopsis, named=frozenset()):
     `named` holds identifiers of positional arguments, as `_identifier` makes them.
     A line whose first word has one of them starts an entry too, by the same rules
     as a line opening with a flag, as argparse lists ``targets`` under "positional
-    arguments:"; `_positional_descriptions` reads those entries.
+    arguments:"; `_positional_descriptions` reads those entries.  A line where one
+    space and a letter follow that word opens a sentence instead, as GNU date's
+    ``FORMAT controls the output.  Interpreted sequences are:`` does.
     """
     entry, lines, describing, entry_indent, column = None, [], False, 0, None
     for number, line in enumerate(_expanded(doc).split("\n")):
         head = line.lstrip(" ")
         indent = len(line) - len(head)
-        names = named and _names_positional(head.split(" ", 1)[0], named)
+        names = named and _names_positional(head, named)
         starts = (
             number > 0
             and number not in synopsis
@@ -922,13 +924,21 @@ def _option_entries(doc, synopsis, named=frozenset()):
         yield entry, lines
 
 
-def _names_positional(word, named):
-    """Is this word the spelling of a positional argument with one of these names?
+def _names_positional(line, named):
+    """Does this line open with the spelling of a positional with one of these names?
 
     A word with no letter or digit, such as ``-`` for standard input, names none,
-    since every such word would make the same identifier.
+    since every such word would make the same identifier.  A word followed by one
+    space and a letter opens a sentence rather than an entry, which writes its
+    description after two spaces, or notation after one, as dos2unix's ``file ...``
+    does.
     """
-    return any(c.isalnum() for c in word) and _identifier(word) in named
+    word, _, rest = line.partition(" ")
+    return (
+        any(c.isalnum() for c in word)
+        and not rest[:1].isalpha()
+        and _identifier(word) in named
+    )
 
 
 def _positional_descriptions(doc, synopsis, positionals):

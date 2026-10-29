@@ -1026,6 +1026,23 @@ def test_prose_opening_with_a_positionals_name_is_no_entry():
 
 
 @pytest.mark.parametrize(
+    "line, description",
+    [
+        ("FORMAT controls the output.  Sequences are:", ""),
+        ("FORMAT ...      The output format.", "The output format."),
+    ],
+)
+def test_a_sentence_opening_with_a_positionals_name_is_no_entry(line, description):
+    """GNU date writes prose at column 0 that opens with its `FORMAT` placeholder.
+
+    One space and a letter after the name open a sentence; dos2unix's entry
+    `file ...` writes notation after one space and is still an entry.
+    """
+    doc = f"Usage: date [+FORMAT]\n\n{line}\n"
+    assert docopter.parse(doc).positionals[0].description == description
+
+
+@pytest.mark.parametrize(
     "synopsis", ["tool {check,register,upload}", "tool [-v] {run,r,list} ..."]
 )
 def test_a_choice_among_literal_words_is_no_input(synopsis, capsys):
