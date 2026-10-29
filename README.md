@@ -56,6 +56,7 @@ Known issues
 - A positional argument with no other evidence of its type is a `File`, which is right for most bioinformatics tools and wrong for one that is not a path, such as samtools' `region`, a genomic interval; change it to `String` by hand.
   Help text shows no type for an option, so an option that takes a value is typed from help text only by its `[default: ...]` literal, or by a type its description names on a line of its own, as bedtools writes `- FLOAT (e.g. 0.50)`, and is otherwise a `String`.
   An option whose entry writes no placeholder for its value and names no such type, as bedtools' `-g` does, becomes a Boolean, so the generated task cannot pass its value.
+  A flag that no entry documents takes a value where the synopsis writes a placeholder directly after every mention of it, as bedtools writes `-a <bed/gff/vcf/bam>`.
 - Help text gives `parameter_meta` an option's description when it follows the flags on the same line after at least two spaces, which is docopt's rule, or when it begins on the lines after the flags; samtools writes `-R, --read-group-file FILE ...are in a read group listed in FILE` with one space, so that description is empty.
   A description ends at a blank line or at a line indented no deeper than its option, so only its first paragraph is kept.
   A positional argument takes the description of an entry that names it in the same layout, as argparse lists it under "positional arguments:", followed by its alternative spellings, if it has any.

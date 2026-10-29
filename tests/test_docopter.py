@@ -219,12 +219,21 @@ def test_a_line_indented_less_than_the_program_name_ends_the_synopsis():
     ("doc", "expected"),
     [
         (
-            "Usage: prog [-a] FILE\n  or:  prog -b DIR\n",
-            "prog [-a] FILE\n  or:  prog -b DIR",
+            "Usage: prog [-a] FILE\n  or:  prog [-b] DIR\n",
+            "prog [-a] FILE\n  or:  prog [-b] DIR",
         ),
-        ("Usage:\tprog [-a] FILE\n\tprog -b DIR\n", "prog [-a] FILE\n\tprog -b DIR"),
-        (" Usage:\tprog [-a] FILE\n\tprog -b DIR\n", "prog [-a] FILE\n\tprog -b DIR"),
-        ("Usage:\n  prog [-a] FILE\n  prog -b DIR\n", "prog [-a] FILE\n  prog -b DIR"),
+        (
+            "Usage:\tprog [-a] FILE\n\tprog [-b] DIR\n",
+            "prog [-a] FILE\n\tprog [-b] DIR",
+        ),
+        (
+            " Usage:\tprog [-a] FILE\n\tprog [-b] DIR\n",
+            "prog [-a] FILE\n\tprog [-b] DIR",
+        ),
+        (
+            "Usage:\n  prog [-a] FILE\n  prog [-b] DIR\n",
+            "prog [-a] FILE\n  prog [-b] DIR",
+        ),
     ],
 )
 def test_a_synopsis_continues_on_lines_aligned_with_its_program_name(doc, expected):
@@ -853,6 +862,84 @@ def test_a_type_bullet_leaves_the_synopsis_reading_alone(capsys):
     assert capsys.readouterr().err == ""
     assert positionals
     assert options_of(doc)[:2] == [("-l", None, 0, False), ("-r", None, 0, False)]
+
+
+@pytest.mark.parametrize(
+    "flag, value, name",
+    [("-g", "<genome>", "g"), ("--log-dir", "LOG_DIR", "log_dir")],
+)
+def test_an_undocumented_flag_before_a_placeholder_takes_it_as_its_value(
+    flag, value, name, capsys
+):
+    """bedtools writes `-a <bed>` and documents no `-a`, so the placeholder was an input.
+
+    argparse 3.13 writes `--log-dir, --log_dir LOG_DIR`, whose entry keeps only the
+    last long spelling, so the synopsis's is undocumented too.
+    """
+    task = docopter.transform(*docopter.parse(f"Usage: tool {flag} {value} <in>\n"))
+    assert capsys.readouterr().err == ""
+    assert [
+        (arg.name, arg.option_flag, arg.option_has_value) for arg in task["cli_args"]
+    ] == [("in", "", False), (name, flag, True)]
+
+
+@pytest.mark.parametrize(
+    "synopsis, spellings",
+    [
+        # One occurrence is followed by a command word, which a value would take.
+        ("[-x <n>] [-x word]", [["<n>"], ["word"]]),
+        # `-pz` would give the token after it to `-z`.
+        ("-z <x> -pz run", [["<x>"], ["run"]]),
+    ],
+)
+def test_a_flag_takes_no_value_unless_every_occurrence_is_followed_by_one(
+    synopsis, spellings
+):
+    """Only a token that would otherwise be a positional becomes a value."""
+    positionals = docopter.parse(f"Usage: tool {synopsis}\n").positionals
+    assert [p.spellings for p in positionals] == spellings
+
+
+@pytest.mark.parametrize(
+    "entry, spellings, takes_value",
+    [
+        ("--[no-]foo  Enable it.", [["<x>"]], False),
+        ("--[no-]foo <v>  Use it.", [], True),
+    ],
+)
+def test_a_documented_twin_decides_whether_a_synopsis_flag_takes_a_value(
+    entry, spellings, takes_value
+):
+    """git's synopsis names `--trailer <token>` and its entry `--[no-]trailer <t>`.
+
+    The documented option is the one `transform` passes, so a placeholder its
+    switch cannot take stays a positional.
+    """
+    doc = f"Usage: tool [--foo <x>]\n\nOptions:\n  {entry}\n"
+    parsed = docopter.parse(doc)
+    assert [p.spellings for p in parsed.positionals] == spellings
+    [foo] = [arg for arg in docopter.transform(*parsed)["cli_args"] if arg.option_flag]
+    assert (foo.option_flag, foo.option_has_value) == ("--foo", takes_value)
+
+
+def test_synopsis_options_keep_the_order_the_synopsis_names_them():
+    """`-a` gets its value before the synopsis is read, and still follows `-x`.
+
+    `-b` is the value `-o` takes, so the tree never names it as an option.
+    """
+    doc = "Usage: tool [-x] [-a <in>] [--only] -o -b <y>\n\nOptions:\n  -o FILE  Out.\n"
+    assert options_of(doc) == [
+        ("-o", None, 1, None),
+        ("-x", None, 0, False),
+        ("-a", None, 1, None),
+        (None, "--only", 0, False),
+    ]
+
+
+def test_a_synopsis_that_does_not_parse_is_read_as_without_synopsis_values(capsys):
+    """The options are those the first reading registered before it failed."""
+    assert options_of("Usage: tool -a <x> (\n") == [("-a", None, 0, False)]
+    assert "unmatched '('" in capsys.readouterr().err
 
 
 def test_tabs_advance_to_stops_eight_columns_apart():

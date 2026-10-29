@@ -475,35 +475,47 @@ def _read_command_line(printable, usage, options):
     that word and shift its arguments one slot out of alignment.  Such an
     alternative produces a warning, since the task can wrap only one command.
 
-    A pattern that does not parse is read once more with the brackets around each
-    option's value removed, as `_without_value_brackets` describes.  The retry runs
-    on a copy of the options-block entries, and `options` takes the options it
-    appends only when it succeeds, so a usage line that parses neither way leaves
-    `options` exactly as the first attempt did, and the warning reports that
-    attempt's error.  A usage line that parses as written is not rewritten, except
-    that the repetition `_without_value_repeats` describes is removed beforehand.
-    With no tree to confirm them, the command words are those of the text alone.
+    A flag that the options block does not document but that the synopsis always
+    writes directly before a placeholder, as bedtools writes ``-a <bed>``, takes
+    that placeholder as its value, as `_synopsis_valued_options` describes.  Where
+    the synopsis does not parse with those options, it is read without them, so a
+    usage line that parses neither way is read exactly as it would be without the
+    rule.  The options the synopsis alone names follow the documented ones in the
+    order the tree first names them, and an option the tree never names, because a
+    value-taking option before it took it as its value, is dropped.
+
+    A usage line that parses as written is not rewritten, except that the
+    repetition `_without_value_repeats` describes is removed beforehand; one that
+    does not is read once more as `_read_pattern` describes.  With no tree to
+    confirm them, the command words are those of the text alone.
     """
     words = _command_words(usage)
-    entries = options[:]
+    documented = len(options)
     formal = _without_value_repeats(
         docopt.formal_usage(_CONTINUATION.sub("", printable)), options
     )
-    try:
-        pattern = docopt.parse_pattern(formal, options)
-    except docopt.DocoptLanguageError as why:
+    valued = _synopsis_valued_options(formal, options)
+    for reading in ([[*options, *valued]] if valued else []) + [options]:
         try:
-            pattern = docopt.parse_pattern(
-                _without_value_brackets(formal, entries), entries
-            )
-        except docopt.DocoptLanguageError:
-            print(
-                "Warning: could not read positional arguments from the usage line:",
-                why,
-                file=sys.stderr,
-            )
-            return " ".join(words), []
-        options[:] = entries
+            pattern = _read_pattern(formal, reading)
+        except docopt.DocoptLanguageError as error:
+            why = error
+        else:
+            break
+    else:
+        print(
+            "Warning: could not read positional arguments from the usage line:",
+            why,
+            file=sys.stderr,
+        )
+        return " ".join(words), []
+    first = {}
+    for index, leaf in enumerate(pattern.flat(docopt.Option)):
+        first.setdefault((leaf.short, leaf.long), index)
+    options[:] = reading[:documented] + sorted(
+        (opt for opt in reading[documented:] if (opt.short, opt.long) in first),
+        key=lambda opt: first[opt.short, opt.long],
+    )
     # `formal_usage` wraps each line of the synopsis in parentheses and joins the
     # lines with `|`, so the tree's one child is either an Either of the lines or
     # the single line itself.  A synopsis that closes and reopens a parenthesis, as
@@ -559,6 +571,86 @@ def _sequence(node):
     `formal_usage` turns into ``( A) | B | (C )``.
     """
     return node.children if isinstance(node, docopt.ParentPattern) else [node]
+
+
+def _read_pattern(formal, options):
+    """Parse `formal` into docopt's pattern tree, retrying once if it does not parse.
+
+    The retry reads the text with the brackets around each option's value removed,
+    as `_without_value_brackets` describes.  It runs on a copy of `options`, which
+    `options` takes only when the retry succeeds, so where neither reading succeeds
+    `options` holds what the first reading appended before it failed, and the
+    first reading's error is raised.
+    """
+    entries = options[:]
+    try:
+        return docopt.parse_pattern(formal, options)
+    except docopt.DocoptLanguageError as why:
+        try:
+            pattern = docopt.parse_pattern(
+                _without_value_brackets(formal, entries), entries
+            )
+        except docopt.DocoptLanguageError:
+            raise why from None
+        options[:] = entries
+        return pattern
+
+
+def _synopsis_valued_options(formal, options):
+    """The options the synopsis alone shows taking a value, as ``-a <bed>`` does.
+
+    `parse_shorts` gives a flag the options block does not document no value, and
+    `parse_long` gives one only where its token carries ``=``, so bedtools'
+    ``-a <bed/gff/vcf/bam>``, which no entry documents, reads as a switch followed
+    by a positional.  A flag gets a value here when no entry documents its exact
+    spelling, and every token of the synopsis that spells it, a long flag without
+    ``=`` or a short flag of one letter, is directly followed by a placeholder:
+    a token `parse_atom` reads as an argument, angle-bracketed or in capitals.
+
+    Because the value it takes is a token that would otherwise be a positional,
+    the rule never decides whether a synopsis parses: never a bracket, a bar or a
+    command word, which an option given a value before `parse_pattern` would take
+    where it is followed by one, as D27 measured on slop's ``(-l and -r)``.  For
+    the same reason a short flag whose letter ends a stack of letters, as ``z``
+    ends ``-pz``, takes none, since the stack would take the token after it.
+
+    A flag whose spelling matches a documented option only once the notation that
+    `_passable_flag` removes is removed, as git's synopsis names ``--trailer`` and
+    its entry ``--[no-]trailer <trailer>``, takes a value only where that option
+    does, since `transform` passes the flag from the documented option.
+    """
+    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    declared = {flag for opt in options for flag in (opt.short, opt.long) if flag}
+    twins = {}
+    for opt in options:
+        for flag in (opt.short, opt.long):
+            if flag:
+                twins.setdefault(_passable_flag(flag), opt.argcount)
+    followed = {}
+    for token, after in zip(tokens, [*tokens[1:], ""]):
+        long = token.startswith("--") and token != "--" and "=" not in token
+        short = len(token) == 2 and token[0] == "-" and token[1] != "-"
+        if (long or short) and token not in declared:
+            followed[token] = followed.get(token, True) and _is_placeholder(after)
+    stacked = {
+        "-" + token[-1]
+        for token in tokens
+        if token.startswith("-") and not token.startswith("--") and len(token) > 2
+    }
+    return [
+        docopt.Option(None, flag, 1)
+        if flag.startswith("--")
+        else docopt.Option(flag, None, 1)
+        for flag, always in followed.items()
+        if always and flag not in stacked and twins.get(flag, 1)
+    ]
+
+
+def _is_placeholder(token):
+    """Does `parse_atom` read this synopsis token as an argument?"""
+    return not token.startswith("-") and (
+        token.startswith("<") and token.endswith(">") or token.isupper()
+    )
 
 
 def _without_value_brackets(formal, options):

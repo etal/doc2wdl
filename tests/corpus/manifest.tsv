@@ -18,7 +18,7 @@ wgsim	parsed	stderr	wgsim 1.23.1	wgsim	positionals recovered cleanly
 cnvkit-batch	parsed	stdout	CNVkit 0.9.15.dev0	cnvkit.py batch -h	positionals recovered cleanly once the brackets argparse writes around an optional value, as in [-p [PROCESSES]], are removed on a second reading
 miniwdl-check	parsed	stdout	miniwdl 1.14.2	miniwdl check --help	argparse's WDL_URI [WDL_URI ...] read as two positionals
 tabix	parsed	stdout	htslib 1.23.1	tabix --help	[OPTIONS] and ... read as positionals
-bedtools-intersect	parsed	stderr	bedtools 2.31.1	bedtools intersect --help	the options block omits the -a and -b the synopsis names, so their values are read as positionals; -f and -F, whose descriptions name the value's type, take a value, while options whose value only prose describes, such as -g and -iobuf, read as switches
+bedtools-intersect	parsed	stderr	bedtools 2.31.1	bedtools intersect --help	[OPTIONS] read as a positional; -a and -b, which the options block omits, take the placeholders the synopsis writes after them; -f and -F, whose descriptions name the value's type, take a value, while options whose value only prose describes, such as -g and -iobuf, read as switches
 htsfile	parsed	stdout	htslib 1.23.1	htsfile --help	positionals recovered cleanly; the options block directly under the synopsis ends it
 ls	parsed	stderr	macOS 26.6.2	/bin/ls --help	no options block, so the value of -D is read as a positional
 jq	parsed	stdout	jq 1.7.1-apple	jq --help	<jq filter> split at its space
