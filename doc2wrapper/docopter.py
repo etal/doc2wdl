@@ -172,6 +172,8 @@ def parse(doc):
     #               # likewise: for an option with argcount 0, the type its
     #               # description states it takes a value of, as `_value_kind`
     #               # reads it, or None
+    #   attached    # likewise: whether the entry writes the flag with its value
+    #               # attached by `=`, as in `--time=WORD`
     options = _documented_options(doc, synopsis)
     documented = len(options)
     cli_prefix, positionals = _read_command_line(printable, usage, options)
@@ -181,6 +183,7 @@ def parse(doc):
         option.description = ""
         option.repeated = None
         option.declared_type = None
+        option.attached = False
     _positional_descriptions(doc, synopsis, positionals)
     return ParsedHelp(usage, cli_prefix, positionals, options)
 
@@ -389,12 +392,22 @@ def _one_per_flag(options, flags):
     """The option that passes each flag, keyed by the flag, one option for each.
 
     Two options may pass one flag: an option documented twice, as gcc documents
-    ``-fcf-protection`` both as a switch and with an attached value, and an option
-    the synopsis alone names whose spelling the options block writes otherwise, as
-    git's synopsis names ``--dry-run`` beside the documented ``--[no-]dry-run``.
-    Among the options passing a flag, the first with a description wins, and where
-    none has one, the first does.  A line of prose read as an entry has none, and
-    the options the synopsis alone names follow every documented one and have none.
+    ``-flto`` both as a switch and as ``-flto=<value>``, and an option the synopsis
+    alone names whose spelling the options block writes otherwise, as git's
+    synopsis names ``--dry-run`` beside the documented ``--[no-]dry-run``.  Among
+    the options passing a flag, one with a description wins over one without, and
+    among those, one that does not take a value attached by ``=`` wins over one that
+    does; where these leave a tie, the first wins.  A line of prose read as an entry
+    has no description, and the options the synopsis alone names follow every
+    documented one and have none.  A flag written both bare and with an attached
+    value takes that value optionally, and a task passes a value after a space,
+    which such a tool reads as an argument of its own: clang reads ``-flto full`` as
+    an input file.  So the switch is the one form of the two a task can pass.
+
+    An entry naming a fixed value of another entry's flag, as GNU ls documents
+    ``-p, --indicator-style=slash`` beside ``--indicator-style=WORD``, passes the
+    same long flag and is left out like any other: passing its short flag instead
+    would keep the value its entry reads, and ``ls -p slash`` names a file.
     `flags` holds each option's passable flag, None where it has none; such options
     and skipped ones take part in no choice.  Options passing different flags are
     never merged, even where their input names would coincide.
@@ -403,9 +416,14 @@ def _one_per_flag(options, flags):
     for option, flag in zip(options, flags):
         if flag is None or _is_skipped(flag, option):
             continue
-        if flag not in chosen or (option.description and not chosen[flag].description):
+        if flag not in chosen or _preference(option) > _preference(chosen[flag]):
             chosen[flag] = option
     return chosen
+
+
+def _preference(option):
+    """How `_one_per_flag` ranks the options passing one flag, higher first."""
+    return bool(option.description), not (option.attached and _takes_value(option))
 
 
 def _is_command_word(token):
@@ -814,7 +832,8 @@ def _documented_options(doc, synopsis):
     ``-A|--accession`` are read as ``-A, --accession``, and ``--verbose...`` as
     ``--verbose``, which clap writes for a flag counted each time it is passed.
     Each option also records the placeholder its flags repeat, as argparse writes
-    the value of an ``nargs="+"`` option as ``NORMAL [NORMAL ...]``, or None.
+    the value of an ``nargs="+"`` option as ``NORMAL [NORMAL ...]``, or None, and as
+    ``attached`` whether its flags write its flag with a value attached by ``=``.
     """
     options = []
     for entry, description in _option_entries(doc, synopsis):
@@ -825,6 +844,11 @@ def _documented_options(doc, synopsis):
         repeat = _REPEATED_VALUE.search(flags)
         option.repeated = repeat.group(1) if repeat else None
         option.declared_type = None if option.argcount else _value_kind(description)
+        option.attached = any(
+            "=" in spelling
+            and spelling.partition("=")[0] in (option.short, option.long)
+            for spelling in flags.replace(",", " ").split()
+        )
         options.append(option)
     return options
 

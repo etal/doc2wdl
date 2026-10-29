@@ -64,7 +64,7 @@ Known issues
 - A `count` option such as `-v` becomes a Boolean, so the generated task can pass it at most once.
 - An option whose flag carries brackets other than an optional part of its name, such as `--color[=WHEN]`, is left out with a warning, because a task cannot pass a value attached to its flag optionally; an optional part, as in samtools' `--region[s]-file`, is dropped from the flag instead.
   Other notation that names no flag the task can pass, such as absl's trailing colon in bq's `--apilog:`, a placeholder in the name, as in gcc's `-W<warning>`, or the end-of-options marker `--`, is left out the same way, and two spellings joined by a bar, as in `-A|--accession`, pass the long one.
-- Where the help text declares one flag more than once, the task passes it from one input, the first declaration with a description, and leaves the others out with a warning.
+- Where the help text declares one flag more than once, the task passes it from one input, the first declaration with a description, and leaves the others out with a warning; a declaration whose value is attached by `=`, as in gcc's `-flto=<value>`, gives way to one that is not, since a task passes a value after a space.
 
 Reading help text is best-effort by nature, and its limits are recorded rather than guessed.
 `tests/corpus/` holds 14 help texts captured from real tools, chosen to represent the shapes the reader meets rather than as a sample, and `tests/corpus/manifest.tsv` records the command that produced each and what the reader makes of it.

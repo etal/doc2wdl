@@ -629,6 +629,26 @@ def test_among_entries_passing_one_flag_the_first_described_wins():
     ]
 
 
+@pytest.mark.parametrize(
+    "entries, expected",
+    [
+        # clang reads `-flto full` as an input file, so only the switch is passable.
+        (["-flto=<value>  Set the mode.", "-flto  Enable it."], (False, "Enable it.")),
+        (["-flto  Enable it.", "-flto=<value>  Set the mode."], (False, "Enable it.")),
+        # Both take a value; the declaration passing it after a space wins.
+        (
+            ["-mllvm=<arg>  An alias.", "-mllvm <value>  Forward it."],
+            (True, "Forward it."),
+        ),
+    ],
+)
+def test_a_value_attached_by_an_equals_sign_loses_to_another_form(entries, expected):
+    """gcc documents `-flto=<value>` before `-flto`, and a task passes a value spaced."""
+    doc = "Usage: cc [options]\n\nOptions:\n" + "".join(f"  {e}\n" for e in entries)
+    task = docopter.transform(*docopter.parse(doc))
+    assert [(arg.option_has_value, arg.doc) for arg in task["cli_args"]] == [expected]
+
+
 def test_flags_that_differ_stay_apart_even_where_their_names_coincide(capsys):
     """torchrun documents both `--log-dir` and `--log_dir`; the writer numbers them."""
     doc = "Usage: tool [options]\n\nOptions:\n  --log-dir D  Logs.\n  --log_dir D  Logs.\n"

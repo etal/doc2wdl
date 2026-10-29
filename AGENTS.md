@@ -574,6 +574,16 @@ Over the 196 help texts, six records change and no outcome class, CLI prefix or 
 twine's `{check,register,upload}` is a required argument, so its task can no longer name the command, and the warning says so.
 Every changed document passes `miniwdl check` and `nextflow lint`, and both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
 
+**D36** — of two declarations of one flag, the one a task cannot pass could win.
+D26 passes each flag from its first declaration with a description, and Apple clang's help, captured as `gcc`, documents 32 flags first with a value attached by `=` and then bare, as in `-flto=<value>` before `-flto`, so the task rendered `-flto full`, which clang reads as an input file.
+A flag written both bare and with an attached value takes that value optionally, and a task passes a value after a space, so the switch is the one form of the two a task can pass; `du`'s `--time` before `--time=WORD` chose it only because GNU lists the switch first.
+`_documented_options` now records as `attached` whether an entry writes its flag with a value attached by `=`, and `_one_per_flag` still prefers a declaration with a description and, among those, one that does not take a value attached by `=`; any tie still goes to the first.
+A declaration with a description still wins over one without, since an entry with none is often prose read as an entry.
+Four of clang's flags are documented as `-mllvm=<arg>  Alias for -mllvm` beside `-mllvm <value>`, and now take the second declaration's description, while still taking a value.
+Passing a fixed-value entry such as GNU ls's `-p, --indicator-style=slash` by its short flag was measured and not adopted: `Option.parse` reads `=slash` as a placeholder, so the input would pass `-p slash`, which `ls` reads as a file name, and no textual rule separates `=slash` from a placeholder such as pytest's `--maxfail=num`.
+Over the 196 help texts only `gcc` changes: 32 inputs become switches, four take another description, and no outcome class, CLI prefix, positional or warning moves; the document passes `miniwdl check` and `nextflow lint`, and both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
+One entry that writes its flag both bare and with an attached value, as GNU sort's `-c, --check, --check=diagnose-first` does, is still one declaration taking a value, so the task passes `--check diagnose-first`, which `sort` 9.5 rejects as an extra operand; that is the shape D21 leaves out when written as `--color[=WHEN]`, and is not yet read as such.
+
 ### Working on the vendored parser
 
 `doc2wrapper/_docopt.py` is docopt 0.6.2 with every definition of the runtime argv-matching path deleted whole, and `parse_defaults` with it, and nothing else changed except two regex literals that gained the `r` prefix they always needed.
