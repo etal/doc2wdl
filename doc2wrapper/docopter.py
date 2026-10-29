@@ -54,7 +54,8 @@ _PATTERN_SYMBOL = re.compile(r"([\[\]\(\)\|]|\.\.\.)")
 # an `nargs="+"` option, `NORMAL [NORMAL ...]`, in an options-block entry's flags.
 # The placeholder may be attached to a long flag with `=`, as in
 # `--normal=N [N ...]`, which `parse_long` reads as one token, but not to a short
-# flag: `parse_shorts` reads `-n=N` as a stack of letters.
+# flag: `parse_shorts` gives a documented `-n` the value `=N` in `-n=N`, not the
+# placeholder `N`.
 _REPEATED_VALUE = re.compile(r"(?:^|\s|--[^\s=]+=)([^\s\[\]-]\S*) \[\1 \.\.\.\]")
 
 # A bracketed optional part inside a flag's name, as in `--region[s]-file`, and
@@ -653,30 +654,28 @@ def _synopsis_valued_options(formal, options):
     short flag whose letter ends a stack of letters, as ``z`` ends ``-pz``, takes
     none, since the stack would take the token after it.
 
-    A placeholder followed by ``...`` stays a positional, so that ``-i <file>...``
-    keeps its list, which nothing reads from a repeated option.  A flag that
-    `_passable_flag` rejects, such as absl's ``--apilog:``, takes no value either,
-    since `transform` leaves such an option out and its value would go with it.
-    A flag whose spelling matches a documented option only once the notation that
-    `_passable_flag` removes is removed, as git's synopsis names ``--trailer`` and
-    its entry ``--[no-]trailer <trailer>``, takes a value only where that option
-    does, since `transform` passes the flag from the documented option.
+    A flag that `_passable_flag` rejects, such as absl's ``--apilog:``, takes no
+    value, since `transform` leaves such an option out and its value would go with
+    it.  A flag whose spelling matches a documented option only once the notation
+    that `_passable_flag` removes is removed, as git's synopsis names ``--trailer``
+    and its entry ``--[no-]trailer <trailer>``, takes a value only where that
+    option does, since `transform` passes the flag from the documented option.  A
+    placeholder followed by ``...`` is taken as one value, so ``-i <file>...``
+    passes one file: read as a positional list, the files would precede the flag.
     """
     tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
-    declared, twins = set(), {}
+    declared, twin_argcount = set(), {}
     for opt in options:
         for flag in (opt.short, opt.long):
             if flag:
                 declared.add(flag)
-                twins.setdefault(_passable_flag(flag), opt.argcount)
+                twin_argcount.setdefault(_passable_flag(flag), opt.argcount)
     followed = {}
-    for index, token in enumerate(tokens):
-        value, repeat = [*tokens[index + 1 : index + 3], "", ""][:2]
+    for token, after in zip(tokens, [*tokens[1:], ""]):
         long = token.startswith("--") and token != "--" and "=" not in token
         short = len(token) == 2 and token[0] == "-" and token[1] != "-"
         if (long or short) and token not in declared:
-            valued = _is_placeholder(value) and repeat != "..."
-            followed[token] = followed.get(token, True) and valued
+            followed[token] = followed.get(token, True) and _is_placeholder(after)
     stacked = {
         "-" + token[-1]
         for token in tokens
@@ -689,7 +688,7 @@ def _synopsis_valued_options(formal, options):
         for flag, always in followed.items()
         if always
         and flag not in stacked
-        and twins.get(flag, 1) == 1
+        and twin_argcount.get(flag, 1) == 1
         and _passable_flag(flag) is not None
     ]
 

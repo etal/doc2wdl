@@ -413,6 +413,18 @@ def test_a_repeated_option_value_is_the_options_list(spelled, retried, attached)
     assert not args["p"].is_array
 
 
+def test_a_short_flag_with_an_attached_repetition_is_no_list():
+    """An entry's repetition after a short flag's attached value makes no list.
+
+    `parse_shorts` gives a documented `-n` the value `=N` in `-n=N`, not the
+    placeholder `N`, so the entry repeats no value.
+    """
+    doc = "usage: tool [options] <in>\n\noptions:\n  -n=N [N ...]  Normal samples.\n"
+    task = docopter.transform(*docopter.parse(doc))
+    [normal] = [arg for arg in task["cli_args"] if arg.option_flag]
+    assert (normal.option_flag, normal.is_array) == ("-n", False)
+
+
 @pytest.mark.parametrize("entry", ["  -f path  Root.\n", ""])
 def test_a_list_after_an_option_value_stays_positional_without_its_entry(entry):
     """BSD find writes `-f path [path ...]`, where the list is the operands'."""
@@ -886,7 +898,12 @@ def test_a_type_bullet_leaves_the_synopsis_reading_alone(capsys):
 
 @pytest.mark.parametrize(
     "flag, value, name",
-    [("-g", "<genome>", "g"), ("--log-dir", "LOG_DIR", "log_dir")],
+    [
+        ("-g", "<genome>", "g"),
+        ("--log-dir", "LOG_DIR", "log_dir"),
+        # One value: as a positional list, the files would precede the flag.
+        ("-i", "<file>...", "i"),
+    ],
 )
 def test_an_undocumented_flag_before_a_placeholder_takes_it_as_its_value(
     flag, value, name, capsys
@@ -899,8 +916,9 @@ def test_an_undocumented_flag_before_a_placeholder_takes_it_as_its_value(
     task = docopter.transform(*docopter.parse(f"Usage: tool {flag} {value} <in>\n"))
     assert capsys.readouterr().err == ""
     assert [
-        (arg.name, arg.option_flag, arg.option_has_value) for arg in task["cli_args"]
-    ] == [("in", "", False), (name, flag, True)]
+        (arg.name, arg.option_flag, arg.option_has_value, arg.is_array)
+        for arg in task["cli_args"]
+    ] == [("in", "", False, False), (name, flag, True, False)]
 
 
 @pytest.mark.parametrize(
@@ -910,8 +928,6 @@ def test_an_undocumented_flag_before_a_placeholder_takes_it_as_its_value(
         ("[-x <n>] [-x word]", [["<n>"], ["word"]]),
         # `-pz` would give the token after it to `-z`.
         ("-z <x> -pz run", [["<x>"], ["run"]]),
-        # A repeated option would lose the list.
-        ("-i <file>...", [["<file>"]]),
         # `transform` leaves out a flag written in notation, and its value with it.
         ("--apilog: <path> <in>", [["<path>"], ["<in>"]]),
     ],
@@ -919,7 +935,7 @@ def test_an_undocumented_flag_before_a_placeholder_takes_it_as_its_value(
 def test_a_synopsis_flag_takes_no_value_where_a_positional_would_be_lost(
     synopsis, spellings
 ):
-    """Only a token that would otherwise be a positional, and stay one, is a value."""
+    """Each flag takes no value, so the token after it stays a positional."""
     positionals = docopter.parse(f"Usage: tool {synopsis}\n").positionals
     assert [p.spellings for p in positionals] == spellings
 
@@ -960,8 +976,8 @@ def test_synopsis_options_keep_the_order_the_synopsis_names_them():
     ]
 
 
-def test_a_synopsis_that_does_not_parse_keeps_the_options_it_first_read(capsys):
-    """The options are those the first reading registered before it failed."""
+def test_a_synopsis_that_does_not_parse_keeps_the_options_read_without_values(capsys):
+    """The options are those the reading without synopsis values registered."""
     assert options_of("Usage: tool -a <x> (\n") == [("-a", None, 0, False)]
     assert "unmatched '('" in capsys.readouterr().err
 
@@ -1070,10 +1086,10 @@ def test_a_sentence_opening_with_a_positionals_name_is_no_entry(line, descriptio
     "synopsis", ["tool {check,register,upload}", "tool [-v] {run,r,list} ..."]
 )
 def test_a_choice_among_literal_words_is_no_input(synopsis, capsys):
-    """argparse writes a subparsers action as a brace group, `{run,r,list}`.
+    """argparse writes a `choices=` positional without a metavar as a brace group.
 
-    So it writes a `choices=` positional without a metavar.  The slot names no
-    argument, and its identifier would concatenate the choices.
+    A subparsers action is written the same way, as `{run,r,list}`.  The slot names
+    no argument, and its identifier would concatenate the choices.
     """
     assert docopter.parse(f"Usage: {synopsis}\n").positionals == []
     assert "a choice among literal words" in capsys.readouterr().err
