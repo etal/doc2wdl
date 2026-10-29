@@ -9,6 +9,7 @@ import itertools
 import re
 import sys
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from . import _docopt as docopt
 from .tasktree import (
@@ -109,6 +110,21 @@ class Positional:
     description: str = ""
 
 
+class ParsedHelp(NamedTuple):
+    """What `parse` reads from a help text, and what `transform` takes."""
+
+    #: The synopsis `_synopsis` finds, with the leading ``usage:`` marker removed.
+    usage: str
+    #: The program name and the command words after it that name the command the
+    #: task invokes.
+    cli_prefix: str
+    #: Each `Positional`, with the description `_positional_descriptions` finds.
+    positionals: list[Positional]
+    #: Each docopt ``Option``, carrying a ``description``: its text from the options
+    #: block, or ``""`` where none was written.
+    options: list[docopt.Option]
+
+
 def parse(doc):
     """Parse the given help text into data structures.
 
@@ -116,12 +132,7 @@ def parse(doc):
         doc: the full ``--help`` output of some command-line tool.
 
     Return:
-        A tuple of the usage text, which is the synopsis `_synopsis` finds with the
-        leading ``usage:`` marker removed; the CLI prefix, i.e. the program name and
-        the command words after it that name the command the task invokes; a list
-        of `Positional`, each with the description `_positional_descriptions`
-        finds; and a list of docopt ``Option``, each carrying a ``description``: its
-        text from the options block, or ``""`` where none was written.
+        A `ParsedHelp`.
 
     Raises:
         UsageNotFound: the help text has no usage section, or has several.  There
@@ -165,7 +176,7 @@ def parse(doc):
         option.repeated = None
         option.declared_type = None
     _positional_descriptions(doc, synopsis, positionals)
-    return usage, cli_prefix, positionals, options
+    return ParsedHelp(usage, cli_prefix, positionals, options)
 
 
 def _synopsis(doc, printable):

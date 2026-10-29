@@ -56,9 +56,7 @@ def test_positionals_are_recovered_from_a_usage_line(help_text):
     Asserting on the RETURN VALUE is the point: the defect this replaces printed a
     warning and returned an empty list, which no test of "does it raise" can see.
     """
-    _usage, _prefix, positionals, _options = docopter.parse(
-        help_text("cnvkit-antitarget")
-    )
+    positionals = docopter.parse(help_text("cnvkit-antitarget")).positionals
     assert [p.spellings for p in positionals] == [["targets"]]
     assert positionals[0].is_required
     assert not positionals[0].is_array
@@ -66,7 +64,7 @@ def test_positionals_are_recovered_from_a_usage_line(help_text):
 
 def test_alternative_spellings_are_one_positional(help_text):
     """`<in.bam>|<in.sam>|<in.cram>` is one input accepting three formats."""
-    _usage, _prefix, positionals, _options = docopter.parse(help_text("samtools-view"))
+    positionals = docopter.parse(help_text("samtools-view")).positionals
     assert [p.spellings for p in positionals] == [
         ["<in.bam>", "<in.sam>", "<in.cram>"],
         ["region"],
@@ -75,8 +73,7 @@ def test_alternative_spellings_are_one_positional(help_text):
 
 def test_repeated_optional_positional_is_an_optional_array(help_text):
     """`[region ...]` repeats, and appears in only one usage alternative."""
-    _usage, _prefix, positionals, _options = docopter.parse(help_text("samtools-view"))
-    region = positionals[1]
+    region = docopter.parse(help_text("samtools-view")).positionals[1]
     assert region.is_array
     assert not region.is_required
 
@@ -122,8 +119,9 @@ def test_subcommand_is_excluded_from_every_alternative(capsys):
     spelling of `<x>`, push `<y>` and `<z>` one slot right, and silently demote
     them to optional.
     """
-    _usage, cli_prefix, positionals, _options = docopter.parse(REPEATED_SUBCOMMAND)
-    assert cli_prefix == "prog sub"
+    parsed = docopter.parse(REPEATED_SUBCOMMAND)
+    assert parsed.cli_prefix == "prog sub"
+    positionals = parsed.positionals
     assert [p.spellings for p in positionals] == [["<x>", "<y>"], ["<z>"]]
     assert positionals[0].is_required
     assert not positionals[1].is_required
@@ -135,9 +133,9 @@ def test_options_before_a_later_alternatives_subcommand_keep_it_a_command_word(
 ):
     """An option group may precede the subcommand in an alternative after the first."""
     doc = "Usage: prog sub <x>\n       prog [-v] sub <y>\n"
-    _usage, cli_prefix, positionals, _options = docopter.parse(doc)
-    assert cli_prefix == "prog sub"
-    assert [p.spellings for p in positionals] == [["<x>", "<y>"]]
+    parsed = docopter.parse(doc)
+    assert parsed.cli_prefix == "prog sub"
+    assert [p.spellings for p in parsed.positionals] == [["<x>", "<y>"]]
     assert capsys.readouterr().err == ""
 
 
@@ -149,19 +147,17 @@ def test_alternatives_naming_different_subcommands_warn_and_stay_aligned(capsys)
     leave `show` in the first slot, as a spelling of `<a>`, and push `<b>` into a
     second, all without any message on standard error.
     """
-    _usage, cli_prefix, positionals, _options = docopter.parse(DIFFERENT_SUBCOMMANDS)
-    assert cli_prefix == "git log"
-    assert [p.spellings for p in positionals] == [["<a>", "<b>"]]
+    parsed = docopter.parse(DIFFERENT_SUBCOMMANDS)
+    assert parsed.cli_prefix == "git log"
+    assert [p.spellings for p in parsed.positionals] == [["<a>", "<b>"]]
     assert "begin with different command words" in capsys.readouterr().err
 
 
 def test_only_the_leading_command_words_are_dropped():
     """A later argument spelled like the subcommand is still an argument."""
-    _usage, cli_prefix, positionals, _options = docopter.parse(
-        "Usage: tool index <in> [index]\n"
-    )
-    assert cli_prefix == "tool index"
-    assert [p.spellings for p in positionals] == [["<in>"], ["index"]]
+    parsed = docopter.parse("Usage: tool index <in> [index]\n")
+    assert parsed.cli_prefix == "tool index"
+    assert [p.spellings for p in parsed.positionals] == [["<in>"], ["index"]]
 
 
 def test_a_command_word_must_also_begin_the_parsed_synopsis():
@@ -170,11 +166,9 @@ def test_a_command_word_must_also_begin_the_parsed_synopsis():
     `sub|alt` reads as one literal word, but the synopsis offers a choice between
     `sub` and `alt`, so the prefix used to carry a shell pipe.
     """
-    _usage, cli_prefix, positionals, _options = docopter.parse(
-        "Usage: prog sub|alt <x>\n"
-    )
-    assert cli_prefix == "prog"
-    assert [p.spellings for p in positionals] == [["sub", "alt"], ["<x>"]]
+    parsed = docopter.parse("Usage: prog sub|alt <x>\n")
+    assert parsed.cli_prefix == "prog"
+    assert [p.spellings for p in parsed.positionals] == [["sub", "alt"], ["<x>"]]
 
 
 @pytest.mark.parametrize(
@@ -186,9 +180,9 @@ def test_a_synopsis_that_closes_its_parenthesis_early_still_parses(synopsis, spe
 
     The tree then holds several groups, or alternatives that are single tokens.
     """
-    _usage, cli_prefix, positionals, _options = docopter.parse(f"Usage: {synopsis}\n")
-    assert cli_prefix == "prog"
-    assert [p.spellings for p in positionals] == spellings
+    parsed = docopter.parse(f"Usage: {synopsis}\n")
+    assert parsed.cli_prefix == "prog"
+    assert [p.spellings for p in parsed.positionals] == spellings
 
 
 def test_gnu_continuation_marker_is_not_an_argument(capsys):
@@ -198,9 +192,12 @@ def test_gnu_continuation_marker_is_not_an_argument(capsys):
     end the previous alternative and become an input named `or`.
     """
     doc = "Usage: tool [-v] SOURCE DEST\n  or:  tool [-v] SOURCE... DIRECTORY\n"
-    _usage, cli_prefix, positionals, _options = docopter.parse(doc)
-    assert cli_prefix == "tool"
-    assert [p.spellings for p in positionals] == [["SOURCE"], ["DEST", "DIRECTORY"]]
+    parsed = docopter.parse(doc)
+    assert parsed.cli_prefix == "tool"
+    assert [p.spellings for p in parsed.positionals] == [
+        ["SOURCE"],
+        ["DEST", "DIRECTORY"],
+    ]
     assert capsys.readouterr().err == ""
 
 
@@ -210,10 +207,10 @@ def test_a_line_indented_less_than_the_program_name_ends_the_synopsis():
     The usage text the templates comment ends with the synopsis too.
     """
     doc = "Usage: prog [-a] FILE\nOptions:\n  -a, --all\n      Everything.\n"
-    usage, _prefix, positionals, options = docopter.parse(doc)
-    assert usage == "prog [-a] FILE"
-    assert [p.spellings for p in positionals] == [["FILE"]]
-    assert [(opt.short, opt.long, opt.description) for opt in options] == [
+    parsed = docopter.parse(doc)
+    assert parsed.usage == "prog [-a] FILE"
+    assert [p.spellings for p in parsed.positionals] == [["FILE"]]
+    assert [(opt.short, opt.long, opt.description) for opt in parsed.options] == [
         ("-a", "--all", "Everything.")
     ]
 
@@ -236,18 +233,18 @@ def test_a_synopsis_continues_on_lines_aligned_with_its_program_name(doc, expect
     Where the marker stands alone, nothing on its line states a column.  The usage
     text keeps every line as written, tabs included.
     """
-    usage, _prefix, positionals, _options = docopter.parse(doc)
-    assert usage == expected
-    assert [p.spellings for p in positionals] == [["FILE", "DIR"]]
+    parsed = docopter.parse(doc)
+    assert parsed.usage == expected
+    assert [p.spellings for p in parsed.positionals] == [["FILE", "DIR"]]
 
 
 def test_a_flag_and_its_description_end_a_synopsis_with_no_column():
     """With the marker alone on its line, an option line still ends the synopsis."""
     doc = "Usage:\n  prog [-a]\n[-b] FILE\n  -a, --all  Everything.\n"
-    usage, _prefix, positionals, options = docopter.parse(doc)
-    assert usage.splitlines() == ["prog [-a]", "[-b] FILE"]
-    assert [p.spellings for p in positionals] == [["FILE"]]
-    assert [(opt.short, opt.description) for opt in options] == [
+    parsed = docopter.parse(doc)
+    assert parsed.usage.splitlines() == ["prog [-a]", "[-b] FILE"]
+    assert [p.spellings for p in parsed.positionals] == [["FILE"]]
+    assert [(opt.short, opt.description) for opt in parsed.options] == [
         ("-a", "Everything."),
         ("-b", ""),
     ]
@@ -266,11 +263,9 @@ def test_prose_or_a_heading_ends_a_synopsis_with_no_column(after):
 
     Neither line carries usage notation or opens with the program name.
     """
-    usage, _prefix, positionals, _options = docopter.parse(
-        f"Usage:\n  prog [-a] <in>\n{after}"
-    )
-    assert usage == "prog [-a] <in>"
-    assert [p.spellings for p in positionals] == [["<in>"]]
+    parsed = docopter.parse(f"Usage:\n  prog [-a] <in>\n{after}")
+    assert parsed.usage == "prog [-a] <in>"
+    assert [p.spellings for p in parsed.positionals] == [["<in>"]]
 
 
 @pytest.mark.parametrize(
@@ -282,9 +277,7 @@ def test_a_line_with_notation_or_a_placeholder_continues_a_synopsis(wrapped):
     `install <pkg>` opens with a word that is not the program name, but carries
     notation.
     """
-    usage, _prefix, _positionals, _options = docopter.parse(
-        f"Usage:\n  prog [options] <req>\n{wrapped}\n"
-    )
+    usage = docopter.parse(f"Usage:\n  prog [options] <req>\n{wrapped}\n").usage
     assert usage == f"prog [options] <req>\n{wrapped}"
 
 
@@ -303,10 +296,10 @@ options:
                   Create.
   -t <z>          Test.
 """
-    _usage, _prefix, positionals, options = docopter.parse(doc)
+    parsed = docopter.parse(doc)
     assert capsys.readouterr().err == ""
-    assert [opt.short for opt in options] == ["-l", "-e", "-c", "-t", "-h"]
-    assert [p.spellings for p in positionals] == [["<d>", "<f>"]]
+    assert [opt.short for opt in parsed.options] == ["-l", "-e", "-c", "-t", "-h"]
+    assert [p.spellings for p in parsed.positionals] == [["<d>", "<f>"]]
 
 
 def test_unparseable_usage_line_degrades_instead_of_crashing(capsys):
@@ -315,10 +308,10 @@ def test_unparseable_usage_line_degrades_instead_of_crashing(capsys):
     A partial task the user finishes by hand beats a traceback, and the options are
     still recoverable.
     """
-    _usage, cli_prefix, positionals, options = docopter.parse(ARITY_OVERLOAD)
-    assert cli_prefix == "tool"
-    assert positionals == []
-    assert [opt.long for opt in options] == ["--tag"]
+    parsed = docopter.parse(ARITY_OVERLOAD)
+    assert parsed.cli_prefix == "tool"
+    assert parsed.positionals == []
+    assert [opt.long for opt in parsed.options] == ["--tag"]
     assert "could not read positional arguments" in capsys.readouterr().err
 
 
@@ -345,16 +338,14 @@ Options:
 )
 def test_an_optional_value_in_brackets_belongs_to_its_option(spelled, capsys):
     """The bracketed value is the option's, and other groups keep their brackets."""
-    _usage, _prefix, positionals, options = docopter.parse(
-        OPTIONAL_VALUES.format(spelled)
-    )
-    assert [(p.spellings, p.is_required) for p in positionals] == [
+    parsed = docopter.parse(OPTIONAL_VALUES.format(spelled))
+    assert [(p.spellings, p.is_required) for p in parsed.positionals] == [
         (["<extra>"], False),
         (["<more>"], False),
         (["<last>"], False),
         (["<in>"], True),
     ]
-    assert [(opt.short, opt.long, opt.argcount) for opt in options] == [
+    assert [(opt.short, opt.long, opt.argcount) for opt in parsed.options] == [
         ("-v", None, 0),
         (None, "--loud", 0),
         ("-p", "--processes", 1),
@@ -379,9 +370,9 @@ def test_a_group_that_is_not_one_placeholder_keeps_its_brackets(group, capsys):
     doc = (
         f"Usage: tool [-p [N]] [--extra] [-p {group}] <in>\n\nOptions:\n  -p N  Gain.\n"
     )
-    _usage, _prefix, positionals, options = docopter.parse(doc)
-    assert positionals == []
-    assert [(opt.short, opt.long) for opt in options] == [("-p", None)]
+    parsed = docopter.parse(doc)
+    assert parsed.positionals == []
+    assert [(opt.short, opt.long) for opt in parsed.options] == [("-p", None)]
     assert "unmatched '('" in capsys.readouterr().err
 
 
@@ -414,7 +405,7 @@ def test_a_repeated_option_value_is_the_options_list(spelled, retried):
 def test_a_list_after_an_option_value_stays_positional_without_its_entry(entry):
     """BSD find writes `-f path [path ...]`, where the list is the operands'."""
     doc = f"usage: find -f path [path ...] <expr>\n\noptions:\n{entry}"
-    _usage, _prefix, positionals, _options = docopter.parse(doc)
+    positionals = docopter.parse(doc).positionals
     assert [(p.spellings, p.is_array) for p in positionals][-2:] == [
         (["path"], True),
         (["<expr>"], False),
@@ -636,7 +627,7 @@ def test_flags_that_differ_stay_apart_even_where_their_names_coincide(capsys):
 
 def descriptions(doc):
     """Each parsed option's ``(short, long)`` flags and description."""
-    _usage, _prefix, _positionals, options = docopter.parse(doc)
+    options = docopter.parse(doc).options
     return {(opt.short, opt.long): opt.description for opt in options}
 
 
@@ -674,7 +665,7 @@ def test_a_description_ends_at_a_blank_line():
 
 def options_of(doc):
     """Each parsed option's flags, argument count and default, in order."""
-    _usage, _prefix, _positionals, options = docopter.parse(doc)
+    options = docopter.parse(doc).options
     return [(opt.short, opt.long, opt.argcount, opt.value) for opt in options]
 
 
@@ -728,7 +719,7 @@ Startup:
 def test_an_option_documented_twice_keeps_each_description():
     """Each entry's description stays with the option it was written beside."""
     doc = "Usage: tool [options]\n\nBasic:\n  -v  Be loud.\n\nMore:\n  -v  Be louder.\n"
-    _usage, _prefix, _positionals, options = docopter.parse(doc)
+    options = docopter.parse(doc).options
     assert [(opt.short, opt.description) for opt in options] == [
         ("-v", "Be loud."),
         ("-v", "Be louder."),
@@ -855,7 +846,7 @@ def test_a_type_bullet_leaves_the_synopsis_reading_alone(capsys):
         "\t-l\tBases to subtract from the start.\n\t\t- (INTEGER)\n"
         "\t-r\tBases to add to the end.\n\t\t- (INTEGER)\n"
     )
-    _usage, _prefix, positionals, _options = docopter.parse(doc)
+    positionals = docopter.parse(doc).positionals
     assert capsys.readouterr().err == ""
     assert positionals
     assert options_of(doc)[:2] == [("-l", None, 0, False), ("-r", None, 0, False)]
@@ -929,7 +920,7 @@ def test_a_positional_entry_matches_any_spelling_and_keeps_the_others():
 def test_a_positional_entry_without_a_description_leaves_it_to_a_later_one():
     """The first entry with a description wins, as among a flag's declarations."""
     doc = "Usage: tool FILE\n\nArguments:\n  FILE\n\n  FILE  The input.\n"
-    _usage, _prefix, positionals, _options = docopter.parse(doc)
+    positionals = docopter.parse(doc).positionals
     assert positionals[0].description == "The input."
 
 
@@ -940,7 +931,7 @@ def test_prose_opening_with_a_positionals_name_is_no_entry():
         "  -q          Quiet; implies that\n"
         "              FILE  is read silently.\n"
     )
-    _usage, _prefix, positionals, _options = docopter.parse(doc)
+    positionals = docopter.parse(doc).positionals
     assert positionals[0].description == ""
 
 
