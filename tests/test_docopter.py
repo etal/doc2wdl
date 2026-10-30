@@ -662,11 +662,162 @@ def test_a_value_attached_by_an_equals_sign_loses_to_another_form(entries, expec
 
 
 def test_flags_that_differ_stay_apart_even_where_their_names_coincide(capsys):
-    """torchrun documents both `--log-dir` and `--log_dir`; the writer numbers them."""
+    """Two entries for `--log-dir` and `--log_dir` stay two; the writer numbers them."""
     doc = "Usage: tool [options]\n\nOptions:\n  --log-dir D  Logs.\n  --log_dir D  Logs.\n"
     task = docopter.transform(*docopter.parse(doc))
     assert [arg.option_flag for arg in task["cli_args"]] == ["--log-dir", "--log_dir"]
     assert capsys.readouterr().err == ""
+
+
+def inputs(doc):
+    """Each option input's flag, flag for false, whether it takes a value, and doc."""
+    task = docopter.transform(*docopter.parse(doc))
+    return [
+        (arg.option_flag, arg.false_flag, arg.option_has_value, arg.doc)
+        for arg in task["cli_args"]
+        if arg.option_flag
+    ]
+
+
+def test_a_synopsis_naming_an_alias_passes_the_documented_option_once(capsys):
+    """Python 3.13 writes `--log-dir, --log_dir DIR` and names `--log-dir` in usage.
+
+    The option carries the last spelling, as the argparse reader passes it, and
+    takes its value from the entry.
+    """
+    doc = (
+        "usage: run [--log-dir DIR] [--start-method {spawn,fork}] FILE\n\noptions:\n"
+        "  --log-dir, --log_dir DIR\n                Where logs go.\n"
+        "  --start-method, --start_method {spawn,fork}\n                How.\n"
+    )
+    assert inputs(doc) == [
+        ("--log_dir", "", True, "Where logs go."),
+        ("--start_method", "", True, "How."),
+    ]
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "synopsis", ["date [-u|--utc|--universal] FILE", "date --utc FILE"]
+)
+def test_an_alias_of_a_switch_does_not_take_the_next_positional(synopsis):
+    """GNU date names every spelling of `-u, --utc, --universal` in its usage.
+
+    Read as undocumented, `--utc` before `FILE` would take it as its value.
+    """
+    doc = f"Usage: {synopsis}\n\n  -u, --utc, --universal  Use UTC.\n"
+    parsed = docopter.parse(doc)
+    assert [p.spellings for p in parsed.positionals] == [["FILE"]]
+    assert inputs(doc) == [("--universal", "", False, "Use UTC.")]
+
+
+@pytest.mark.parametrize(
+    ("synopsis", "entry", "expected"),
+    [
+        # Rewritten to `--log_dir`, which takes a value, the alias would take the
+        # bracket as that value.
+        (
+            "[--log-dir]",
+            "--log-dir, --log_dir DIR",
+            [("--log_dir", "", True, "Logs."), ("--log-dir", "", False, "")],
+        ),
+        # Rewritten to the switch `--universal`, the alias would carry a value
+        # `parse_long` rejects.
+        (
+            "[--utc=X]",
+            "-u, --utc, --universal",
+            [("--universal", "", False, "Logs."), ("--utc", "", True, "")],
+        ),
+    ],
+)
+def test_an_alias_whose_rewrite_would_stop_the_synopsis_parsing_is_kept(
+    synopsis, entry, expected, capsys
+):
+    """Such a spelling stays an undescribed input of its own, a limit D37 records."""
+    doc = f"usage: run {synopsis} FILE\n\noptions:\n  {entry}  Logs.\n"
+    parsed = docopter.parse(doc)
+    assert [p.spellings for p in parsed.positionals] == [["FILE"]]
+    assert inputs(doc) == expected
+    assert capsys.readouterr().err == ""
+
+
+def test_an_alias_of_a_flag_two_entries_declare_is_kept(capsys):
+    """Rewritten to `--universal`, `--utc` would name a flag declared ambiguously.
+
+    It stays an input of its own; the second entry is left out as a duplicate.
+    """
+    doc = (
+        "usage: run [--utc] FILE\n\noptions:\n"
+        "  -u, --utc, --universal  Use UTC.\n"
+        "  --universal  Use UTC, again.\n"
+    )
+    assert [p.spellings for p in docopter.parse(doc).positionals] == [["FILE"]]
+    assert inputs(doc) == [
+        ("--universal", "", False, "Use UTC."),
+        ("--utc", "", False, ""),
+    ]
+    assert "could not read positional arguments" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("synopsis", "entry", "expected"),
+    [
+        ("[--zst | --no-zst]", "--zst, --no-zst", ("--zst", "--no-zst")),
+        ("[options]", "--color / --no-color", ("--color", "--no-color")),
+        ("[options]", "--fast / --safe", ("--fast", "--safe")),
+        ("[options]", "-f, --fast / -s, --safe", ("--fast", "--safe")),
+        # A second flag that is not the first negated as argparse negates it is
+        # another spelling of the first, as node writes these.
+        (
+            "[options]",
+            "--webstorage, --no-experimental-webstorage",
+            ("--no-experimental-webstorage", ""),
+        ),
+    ],
+)
+def test_the_two_values_of_a_switch_are_one_input(synopsis, entry, expected):
+    """argparse writes `--x, --no-x` for `BooleanOptionalAction`, click `--x / --y`.
+
+    The input passes neither flag unless set, so it states no default.
+    """
+    doc = f"usage: tool {synopsis} FILE\n\noptions:\n  {entry}  Use it.\n"
+    task = docopter.transform(*docopter.parse(doc))
+    [switch] = [arg for arg in task["cli_args"] if arg.option_flag]
+    assert (switch.option_flag, switch.false_flag) == expected
+    assert (switch.option_has_value, switch.doc) == (False, "Use it.")
+    assert switch.default_value is (None if expected[1] else False)
+
+
+def test_a_flag_written_bare_and_with_an_attached_value_is_a_switch(capsys):
+    """GNU sort's `--check=diagnose-first` is attached only; `--check` is the switch.
+
+    The next entry names fixed values of the same flag and is left out, as an entry
+    whose value is attached loses to another form of its flag.
+    """
+    doc = (
+        "Usage: sort [OPTION]... [FILE]...\n\n"
+        "  -c, --check, --check=diagnose-first  check for sorted input\n"
+        "  -C, --check=quiet, --check=silent  like -c, but quiet\n"
+    )
+    assert inputs(doc) == [("--check", "", False, "check for sorted input")]
+    assert "'--check' passes '--check'" in capsys.readouterr().err
+
+
+def test_a_synopsis_attaching_a_value_to_a_bare_and_attached_flag_still_parses(
+    capsys,
+):
+    """The synopsis reads the flag as its entry's text says, taking a value."""
+    doc = "Usage: sort [--check=WORD] FILE\n\n  -c, --check, --check=WORD  Check.\n"
+    parsed = docopter.parse(doc)
+    assert [p.spellings for p in parsed.positionals] == [["FILE"]]
+    assert inputs(doc) == [("--check", "", False, "Check.")]
+    assert capsys.readouterr().err == ""
+
+
+def test_a_flag_written_with_its_value_spaced_and_attached_takes_a_value():
+    """`--file FILE, --file=FILE` writes no bare form, so its value is not optional."""
+    doc = "Usage: make [options]\n\n  --file FILE, --file=FILE  Read FILE.\n"
+    assert inputs(doc) == [("--file", "", True, "Read FILE.")]
 
 
 def descriptions(doc):

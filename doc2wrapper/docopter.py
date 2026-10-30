@@ -5,6 +5,7 @@ tree and inspected statically.  Nothing here ever matches the text against
 ``sys.argv`` -- doing so is what made every positional argument disappear.
 """
 
+import collections
 import itertools
 import re
 import sys
@@ -73,6 +74,11 @@ _PLAIN_FLAG = re.compile(r"--?(?:[\w@](?:[\w.@+-]*[\w@+-])?|[%,?])")
 # `-A, --accession` and the second as `--verbose`.
 _FLAG_ALTERNATIVE = re.compile(r"((?<![^\s,])-\w)\|(?=--\w)")
 _FLAG_REPETITION = re.compile(r"(?<![^\s,])(-[^\s,|]*?[\w\]])\.\.\.(?=[\s,]|$)")
+
+# The slash click writes between the spellings of a Boolean flag's two values, as in
+# `--color / --no-color` and `--fast / --safe`.  `_entry_spellings` reads what
+# precedes it as the flag for true and what follows it as the flag for false.
+_FLAG_SENSES = re.compile(r"(?<=[\w\]]) / (?=-)")
 
 # A line of a description that names the type of the option's value as a bullet,
 # as bedtools writes `- FLOAT (e.g. 0.50)` and `- (INTEGER)` under an option whose
@@ -177,6 +183,15 @@ def parse(doc):
     #               # reads it, or None
     #   attached    # likewise: whether the entry writes the flag with its value
     #               # attached by `=`, as in `--time=WORD`
+    #   other_spellings
+    #               # likewise: the long flags the entry writes beside the one the
+    #               # option carries, which the synopsis may name instead, as
+    #               # `_entry_spellings` reads them
+    #   false_flag  # likewise: the flag a switch passes for false, as in
+    #               # `--color / --no-color`, or ""
+    #   value_optional
+    #               # likewise: whether the entry writes the flag both bare and
+    #               # with a value attached, as in `--check, --check=WORD`
     options = _documented_options(doc, synopsis)
     documented = len(options)
     cli_prefix, positionals = _read_command_line(printable, usage, options)
@@ -187,6 +202,9 @@ def parse(doc):
         option.repeated = None
         option.declared_type = None
         option.attached = False
+        option.other_spellings = ()
+        option.false_flag = ""
+        option.value_optional = False
     _positional_descriptions(doc, synopsis, positionals)
     return ParsedHelp(usage, cli_prefix, positionals, options)
 
@@ -319,14 +337,21 @@ def transform(usage, cli_prefix, positionals, options):
             has_output_file = True
         else:
             name = _identifier(option_flag)
+        # A switch with a flag for false has a third state, passing neither, and help
+        # text states no default for it.
+        false_flag = "" if takes_value else _passable_flag(opt.false_flag) or ""
+
         # The options block carries no requiredness, and the synopsis's brackets are
         # read only for positionals, so no option's input is required.  A default
         # makes the input non-optional; `Argument.is_optional` says so, and the
         # writer declares it without `?`.
         if not takes_value:
-            # `Option.value` is False for a valueless flag, which is what such a
-            # flag means: absent, the tool never sees it.
-            value_type, default = type_and_default(declared=bool, default=opt.value)
+            # Absent, a valueless flag is never seen by the tool.  The default is
+            # not `opt.value`, which for a `value_optional` flag holds the attached
+            # declaration's `[default: ...]`.
+            value_type, default = type_and_default(
+                declared=bool, default=None if false_flag else False
+            )
         elif opt.declared_type is not None:
             # Only the description says this flag takes a value, and `Option.parse`
             # reads a `[default: ...]` only for a flag with a placeholder.
@@ -343,6 +368,7 @@ def transform(usage, cli_prefix, positionals, options):
                 is_array=is_array,
                 default_value=default,
                 option_flag=option_flag,
+                false_flag=false_flag,
                 option_has_value=takes_value,
                 doc=opt.description,
             )
@@ -378,9 +404,15 @@ def _takes_value(option):
     `parse`, where the option's argument count decides how the synopsis is read:
     there a flag given a value would take the next token of the synopsis as it,
     which degrades bedtools slop's `[-b <int> or (-l and -r)]`, as `-r` would take
-    the closing parenthesis.
+    the closing parenthesis.  An entry that writes its flag both bare and with a
+    value attached, as ``value_optional`` records, takes none.  `Option.parse`
+    still reads its argument count from the attached declaration, so that a
+    synopsis writing ``--check=WORD`` parses: the text with that declaration
+    dropped would give argument count 0, which `parse_long` rejects with a value.
     """
-    return option.argcount == 1 or option.declared_type is not None
+    return (
+        option.argcount == 1 or option.declared_type is not None
+    ) and not option.value_optional
 
 
 def _is_skipped(flag, option):
@@ -520,7 +552,10 @@ def _read_command_line(printable, usage, options):
     words = _command_words(usage)
     documented = len(options)
     formal = _without_value_repeats(
-        docopt.formal_usage(_CONTINUATION.sub("", printable)), options
+        _carried_spellings(
+            docopt.formal_usage(_CONTINUATION.sub("", printable)), options
+        ),
+        options,
     )
     valued = _synopsis_valued_options(formal, options)
     readings = [[*options, *valued], options] if valued else [options]
@@ -634,6 +669,66 @@ def _read_pattern(formal, options):
             raise why from None
         options[:] = entries
         return pattern
+
+
+def _carried_spellings(formal, options):
+    """Rewrite each flag the synopsis names to the spelling its option carries.
+
+    An options-block entry may write several long flags, of which `Option.parse`
+    keeps the last and `other_spellings` records the rest, as `_entry_spellings`
+    describes.  `parse_long` matches one spelling exactly, so a synopsis naming
+    another, as torchrun's ``[--log-dir LOG_DIR]`` names the first of
+    ``--log-dir, --log_dir LOG_DIR``, would register an option of its own, which
+    `_synopsis_valued_options` gives the placeholder, and the task would pass one
+    option as two inputs.
+
+    A spelling is rewritten only where that cannot stop the synopsis from parsing,
+    for the reason `_synopsis_valued_options` gives.  Where the carried option takes
+    no value, no token spelling it may carry one attached by ``=``, which
+    `parse_long` would reject.  Where it takes one, every token spelling it must
+    carry its value attached or be directly followed by a placeholder or a choice
+    group, which would otherwise be read as a positional, so that the bracket of
+    ``[--log-dir]`` is never taken as a value.  A spelling that another option
+    carries, or that two entries write, is left as written, and so is one whose
+    carried spelling two entries declare, which `parse_long` would then reject as
+    ambiguous.  The text is returned unchanged where no token is rewritten.
+    """
+    writers = {}
+    for option in options:
+        for spelling in option.other_spellings:
+            writers.setdefault(spelling, []).append(option)
+    declared = collections.Counter(option.long for option in options)
+    carried = {
+        spelling: owners[0]
+        for spelling, owners in writers.items()
+        if len(owners) == 1
+        and owners[0].long
+        and declared[owners[0].long] == 1
+        and spelling not in declared
+    }
+    if not carried:
+        return formal
+    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    safe = dict.fromkeys(carried, True)
+    for token, after in zip(tokens, [*tokens[1:], ""]):
+        long, eq, _value = token.partition("=")
+        if long in safe:
+            if carried[long].argcount == 0:
+                fits = not eq
+            else:
+                fits = (
+                    bool(eq)
+                    or _is_placeholder(after)
+                    or bool(_CHOICE_GROUP.fullmatch(after))
+                )
+            safe[long] = safe[long] and fits
+    rewritten = False
+    for index, token in enumerate(tokens):
+        long, eq, value = token.partition("=")
+        if safe.get(long):
+            tokens[index] = carried[long].long + eq + value
+            rewritten = True
+    return " ".join(tokens) if rewritten else formal
 
 
 def _synopsis_valued_options(formal, options):
@@ -847,12 +942,20 @@ def _documented_options(doc, synopsis):
     Each option also records the placeholder its flags repeat, as argparse writes
     the value of an ``nargs="+"`` option as ``NORMAL [NORMAL ...]``, or None, and as
     ``attached`` whether the entry writes its flag with a value attached by ``=``.
+    An entry writing more than one long flag is read as `_entry_spellings`
+    describes, and the option records the flags it does not carry as
+    ``other_spellings``, a flag for false as ``false_flag``, and as
+    ``value_optional`` whether one flag is written both bare and attached.
     """
     options = []
     for entry, description in _option_entries(doc, synopsis):
         flags, gap, text = entry[0].partition("  ")
         flags = _FLAG_REPETITION.sub(r"\1", _FLAG_ALTERNATIVE.sub(r"\1, ", flags))
+        flags, others, false_flag, value_optional = _entry_spellings(flags)
         option = docopt.Option.parse("\n".join([flags + gap + text, *entry[1:]]))
+        option.other_spellings = others
+        option.false_flag = false_flag
+        option.value_optional = value_optional
         option.description = _joined(description)
         repeat = _REPEATED_VALUE.search(flags)
         option.repeated = repeat.group(1) if repeat else None
@@ -864,6 +967,93 @@ def _documented_options(doc, synopsis):
         )
         options.append(option)
     return options
+
+
+def _entry_spellings(flags):
+    """Read an entry's flags as one option.
+
+    Returns the flag text to give `Option.parse`, the long flags the option does
+    not carry, its flag for false or ``""``, and whether one flag is written both
+    bare and with a value attached.
+
+    `Option.parse` keeps the last long flag an entry writes and gives the option a
+    value where any of its flags is written with one, so three shapes are misread.
+    Python 3.13's argparse writes an option with two long spellings as
+    ``--log-dir, --log_dir LOG_DIR``, and GNU writes ``-u, --utc, --universal``:
+    either spelling is the tool's own, the last is the one `Option.parse` keeps
+    and the argparse reader passes, and the others are returned for
+    `_carried_spellings`.  argparse's ``BooleanOptionalAction`` writes the two
+    values of a switch as ``--x, --no-x``, and click writes them as
+    ``--x / --no-x`` or as ``--fast / --safe``: the flags after click's slash, and
+    a second long flag that is the first with ``no-`` inserted, as the action
+    generates it, are the flag for false, the last of which is returned, and they
+    are removed from the text.  GNU sort writes one flag both bare and with a
+    value attached, as ``-c, --check, --check=diagnose-first``, so the flag takes
+    its value optionally and only attached; `_takes_value` reads such an option as
+    the switch, the one form of the two a task can pass, as `_one_per_flag`
+    chooses it across two entries.
+
+    The text is returned as written unless a flag for false is removed from it, so
+    that `Option.parse` reads every other entry's flags, value and default as it
+    reads the text.  Text that is no list of declarations at all is returned as
+    written, and nothing else is read from it; a line of prose read as an entry,
+    such as conda's ``--dry-run or --download-only is specified.``, is no such list.
+    """
+    sides = _FLAG_SENSES.split(flags, maxsplit=1)
+    declarations = _declarations(sides[0])
+    negations = _declarations(sides[1]) if len(sides) > 1 else []
+    if declarations is None or negations is None:
+        return flags, (), "", False
+    # A declaration that is its flag alone, with no placeholder and no `=`, is bare.
+    bare = {d for d in declarations if _flag_name(d) == d}
+    attached = {_flag_name(d) for d in declarations if "=" in d.split()[0]}
+    kept, longs = declarations, _long_flags(declarations)
+    if not negations and len(longs) == 2 and longs[1] == "--no-" + longs[0][2:]:
+        negations = [d for d in declarations if _flag_name(d) == longs[1]]
+        kept = [d for d in declarations if _flag_name(d) != longs[1]]
+        longs = longs[:1]
+    false_flags = _long_flags(negations) or [_flag_name(d) for d in negations]
+    carried = longs[-1:]
+    others = tuple(
+        flag for flag in _long_flags(declarations + negations) if flag not in carried
+    )
+    text = ", ".join(kept) if negations else flags
+    return text, others, false_flags[-1] if false_flags else "", bool(bare & attached)
+
+
+def _declarations(flags):
+    """The declarations an entry's flags are a comma-separated list of, or None.
+
+    A declaration is a flag, which may carry its value attached by ``=``, followed
+    by at most one placeholder, as in ``-U``, ``--file=FILE`` and ``-U FILE``.  The
+    text is read token by token rather than split at commas, since a placeholder
+    may hold one, as cnvkit's ``{hybrid,amplicon,wgs}`` does.  None where the text
+    is no such list, which is how a line of prose read as an entry is told from an
+    entry naming one option twice: its words after the first flag are neither.
+    """
+    declarations, has_placeholder = [], False
+    for token in flags.split():
+        token = token.removesuffix(",")
+        if token.startswith("-") and token != "-":
+            declarations.append(token)
+            has_placeholder = False
+        elif not declarations or has_placeholder:
+            return None
+        else:
+            declarations[-1] += " " + token
+            has_placeholder = True
+    return declarations or None
+
+
+def _flag_name(declaration):
+    """The flag a declaration writes, without its value, spaced or attached by ``=``."""
+    return declaration.split()[0].partition("=")[0]
+
+
+def _long_flags(declarations):
+    """The distinct long flags these declarations write, in order."""
+    flags = map(_flag_name, declarations)
+    return list(dict.fromkeys(flag for flag in flags if flag.startswith("--")))
 
 
 def _value_kind(lines):

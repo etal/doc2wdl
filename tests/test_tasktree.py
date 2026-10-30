@@ -120,3 +120,32 @@ def test_the_two_readers_infer_the_same_types():
         "infile": (ValueType.FILE, False, True, None),
         "extra": (ValueType.FILE, True, False, None),
     }
+
+
+def test_the_two_readers_pass_the_same_flags_for_spellings_of_one_option():
+    """An option with two long spellings, and a switch with a flag for false.
+
+    argparse lists both spellings in one entry, and the synopsis names the first;
+    each reader passes the last.  Compared by flag rather than by name, since the
+    argparse reader names an input from its `dest`, the first spelling, and the
+    help-text reader from the flag it passes.
+    """
+    parser = argparse.ArgumentParser(prog="tool")
+    parser.add_argument("--log-dir", "--log_dir", help="Logs.")
+    parser.add_argument("--zst", action=argparse.BooleanOptionalAction, help="Zst.")
+    parser.add_argument("infile", help="Input.")
+
+    def flags(task):
+        return [
+            (arg.option_flag, arg.false_flag, arg.option_has_value, arg.default_value)
+            for arg in task["cli_args"]
+            if arg.option_flag
+        ]
+
+    (from_parser,) = argparser.unpack_tasks(parser, "tool")
+    from_text = docopter.transform(*docopter.parse(parser.format_help()))
+    assert flags(from_text) == flags(from_parser)
+    assert flags(from_parser) == [
+        ("--log_dir", "", True, None),
+        ("--zst", "--no-zst", False, None),
+    ]
