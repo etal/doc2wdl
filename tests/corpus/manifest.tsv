@@ -6,12 +6,13 @@
 # command is run by capture.py, which also pins the environment; shape says what
 # the reader makes of the file and why.  Captured on macOS 26.6.2, with the bin
 # directory of the cnvkit conda environment first on PATH and that of the dev
-# environment second, which puts their samtools, htslib and wgsim ahead of any
+# environment second, which puts their samtools, htslib, wgsim and zstd ahead of any
 # others and the cnvkit environment's miniwdl 1.14.2 ahead of the dev one's 1.15.0.
 name	outcome	stream	version	command	shape
 tar	usage-not-found	stdout	bsdtar 3.5.3	/usr/bin/tar --help	no usage: marker
 gh-repo-clone	usage-not-found	stdout	gh 2.102.0	gh repo clone --help	Cobra heading USAGE, without a colon
 timeit	usage-not-found	stdout	Python 3.13.12	python3 -m timeit -h	two usage: markers in one docstring
+zstd	degraded	stdout	zstd 1.5.7, conda-forge build	zstd --help	the options block documents -o twice, as -o OUTPUT and the dictionary builder's -o NAME, and the synopsis names -o, so parse_pattern raises and the positionals are lost while the options survive
 zipfile	parsed	stdout	Python 3.13.12	python3 -m zipfile -h	the second value of -e and the list after the value of -c are read as one positional; the wrapped synopsis line opening with -c is synopsis, not an option entry
 samtools-stats	parsed	stdout	samtools 1.23.1	samtools stats --help	[OPTIONS] read as a positional; the options block directly under the synopsis ends it
 wgsim	parsed	stderr	wgsim 1.23.1	wgsim	positionals recovered cleanly
@@ -23,3 +24,5 @@ htsfile	parsed	stdout	htslib 1.23.1	htsfile --help	positionals recovered cleanly
 ls	parsed	stderr	macOS 26.6.2	/bin/ls --help	no options block, so the value of -D is read as a positional
 jq	parsed	stdout	jq 1.7.1-apple	jq --help	<jq filter> split at its space
 cnvkit-import-rna	parsed	stdout	CNVkit 0.9.15.dev0	cnvkit.py import-rna -h	FILES [FILES ...] read as two positionals, while -n NORMAL [NORMAL ...] is one option taking a list; a wrapped line opening with --normal is prose, and its [Default: polish] is --normalize-method's
+samtools-merge	parsed	stdout	samtools 1.23.1	samtools merge	GNU's or: continues the synopsis; both alternatives begin samtools merge and align by position, so -o takes <out.bam> in the first while the second's <out.bam> shares the first slot with <in1.bam> ...
+git-log	parsed	stdout	git 2.56.0	git log -h	the or: alternative begins git show, so a warning names git log as the command wrapped and <object>... shares the slot of <revision-range>; <options> and -- are read as positionals

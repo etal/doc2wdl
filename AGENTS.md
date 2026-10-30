@@ -167,17 +167,18 @@ Everything below was verified by execution on 2026-08-16 unless dated otherwise.
 
 ### What the help-text reader will and will not handle
 
-`tests/corpus/` holds 14 help texts captured from real tools on 2026-10-24, chosen to represent the shapes the reader meets rather than as a sample.
+`tests/corpus/` holds 17 help texts captured from real tools on 2026-10-24 and 2026-10-29, chosen to represent the shapes the reader meets rather than as a sample.
 `tests/corpus/manifest.tsv` records, for each file, the command that produced it, the tool's version, the outcome class, and what the reader makes of the file; `tests/test_corpus.py` asserts every file's class, and `cut -s -f2 tests/corpus/manifest.tsv | sed 1d | sort | uniq -c` counts them.
 Because the corpus is not a sample, its counts describe the corpus and not how often a shape occurs among tools; this file states no rates, since a rate measured over files that are not committed cannot be reproduced.
 
 - **Hard failure: 3.** No single `usage:` marker: none at all (`tar`), a Cobra heading spelled `USAGE` without a colon (`gh repo clone`), or two markers (`python3 -m timeit`, whose docstring has both "Library usage:" and "Command line usage:").
   These raise `docopter.UsageNotFound`, which the CLI reports as a message and exit status 1.
-- **Degraded: 0.** Where `parse_pattern` raises on the synopsis, the positionals degrade to empty with a warning on standard error, and the options survive.
-  No corpus file does so since D23; `tests/test_docopter.py` covers the class with synthetic help text.
-- **Parsed: 11.** `wgsim`, `cnvkit.py batch` and `htsfile` yield exactly their positionals.
+- **Degraded: 1.** Where `parse_pattern` raises on the synopsis, the positionals degrade to empty with a warning on standard error, and the options survive.
+  `zstd` documents `-o` twice, once for its output and once for the dictionary builder, and its synopsis names `-o`, which upstream's parser rejects as ambiguous; `tests/test_docopter.py` also covers the class with synthetic help text.
+- **Parsed: 13.** `wgsim`, `cnvkit.py batch` and `htsfile` yield exactly their positionals.
   The rest run to completion with extra positionals: summary placeholders such as `[OPTIONS]` and `...` (`tabix`, `samtools stats`, `bedtools intersect`), option values the reader cannot attribute to an option (`ls`, which has no options block, and `python3 -m zipfile`, whose `-e` takes two values), or a placeholder split at its space (`jq`'s `<jq filter>`).
   argparse's `X [X ...]` for a positional with `nargs="+"` becomes two positionals, one required and one an optional array (`miniwdl check`, `cnvkit.py import-rna`).
+  Two write further alternatives after GNU's `or:`, which share slots by position: `samtools merge`'s second alternative writes `<out.bam>` where its first, in which `-o` takes that placeholder, writes `<in1.bam> ...`, and `git log`'s names `git show`, so a warning names the command wrapped and `<object>...` shares the slot of `<revision-range>`, while `<options>` and `--` are read as positionals.
 
 The reliable shape is a single synopsis naming at most one fixed subcommand, written directly after the program name, where no flag's arity differs between the options block and the synopsis, and which ends at a blank line, at a line indented less than the program name, or, where the marker stands alone on its line, at a line of prose.
 argparse-generated help wraps the synopsis at `COLUMNS` and aligns each wrapped line under the program name or deeper, so a wrapped line that opens with a flag no longer matters: `python3 -m zipfile`, which degraded at 80 columns, parses at every `COLUMNS` from 30 to 220 in steps of 10.
