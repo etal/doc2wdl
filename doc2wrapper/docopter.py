@@ -533,12 +533,15 @@ def _read_command_line(printable, usage, options):
 
     A flag that the options block does not document but that the synopsis always
     writes directly before a placeholder, as bedtools writes ``-a <bed>``, takes
-    that placeholder as its value, as `_synopsis_valued_options` describes.  Where
-    the synopsis does not parse with those options, it is read without them, so a
-    usage line that parses neither way is read exactly as it would be without the
-    rule.  The options the synopsis alone names follow the documented ones in the
-    order the tree first names them, and an option the tree never names, because a
-    value-taking option before it took it as its value, is dropped.
+    that placeholder as its value, as `_synopsis_valued_options` describes, and so
+    does a documented switch the synopsis always writes so, as
+    `_synopsis_valued_switches` describes; such a switch then takes a value in
+    `options` too.  Where the synopsis does not parse with those values, it is read
+    without them, so a usage line that parses neither way is read exactly as it
+    would be without the rule.  The options the synopsis alone names follow the
+    documented ones in the order the tree first names them, and an option the tree
+    never names, because a value-taking option before it took it as its value, is
+    dropped.
 
     A slot that every alternative writes as a choice group, as `_CHOICE_GROUP`
     matches, is left out with a warning on standard error, since it names no
@@ -560,8 +563,13 @@ def _read_command_line(printable, usage, options):
     )
     formal = _without_value_repeats(formal, entries)
     valued = _synopsis_valued_options(formal, entries)
-    readings = [[*entries, *valued], entries] if valued else [entries]
-    for reading in readings:
+    switches = _synopsis_valued_switches(formal, entries)
+    taking = list(entries)
+    for index in switches:
+        taking[index] = copy.copy(entries[index])
+        taking[index].argcount, taking[index].value = 1, None
+    readings = [[*taking, *valued], entries] if valued or switches else [entries]
+    for number, reading in enumerate(readings):
         try:
             pattern = _read_pattern(formal, reading)
         except docopt.DocoptLanguageError as error:
@@ -582,6 +590,9 @@ def _read_command_line(printable, usage, options):
         (opt for opt in reading[documented:] if (opt.short, opt.long) in first),
         key=lambda opt: first[opt.short, opt.long],
     )
+    if number == 0:
+        for index in switches:
+            options[index].argcount, options[index].value = 1, None
     # `formal_usage` wraps each line of the synopsis in parentheses and joins the
     # lines with `|`, so the tree's one child is either an Either of the lines or
     # the single line itself.  A synopsis that closes and reopens a parenthesis, as
@@ -805,25 +816,14 @@ def _synopsis_valued_options(formal, options):
     `parse_long` gives one only where its token carries ``=``, so bedtools'
     ``-a <bed/gff/vcf/bam>``, which no entry documents, reads as a switch followed
     by a positional.  A flag gets a value here when no entry documents its exact
-    spelling, and every token of the synopsis that spells it, a long flag without
-    ``=`` or a short flag of one letter, is directly followed by a placeholder:
-    a token `parse_atom` reads as an argument, angle-bracketed or in capitals.
-
-    The value it takes is a token that would otherwise be a positional, never a
-    bracket, a bar or a command word, so the rule never stops a synopsis from
-    parsing.  A value read from an option's description could: given one, bedtools
-    slop's ``-r`` would take the ``)`` of ``(-l and -r)``.  For the same reason a
-    short flag whose letter ends a stack of letters, as ``z`` ends ``-pz``, takes
-    none, since the stack would take the token after it.
+    spelling and `_flags_before_placeholders` holds it.
 
     A flag that `_passable_flag` rejects, such as absl's ``--apilog:``, takes no
     value, since `transform` leaves such an option out and its value would go with
     it.  A flag whose spelling matches a documented option only once the notation
     that `_passable_flag` removes is removed, as git's synopsis names ``--trailer``
     and its entry ``--[no-]trailer <trailer>``, takes a value only where that
-    option does, since `transform` passes the flag from the documented option.  A
-    placeholder followed by ``...`` is taken as one value, so ``-i <file>...``
-    passes one file: read as a positional list, the files would precede the flag.
+    option does, since `transform` passes the flag from the documented option.
     """
     tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
     declared, twin_argcount = set(), {}
@@ -832,27 +832,88 @@ def _synopsis_valued_options(formal, options):
             if flag:
                 declared.add(flag)
                 twin_argcount.setdefault(_passable_flag(flag), opt.argcount)
+    return [
+        docopt.Option(None, flag, 1)
+        if flag.startswith("--")
+        else docopt.Option(flag, None, 1)
+        for flag in _flags_before_placeholders(tokens)
+        if flag not in declared
+        and twin_argcount.get(flag, 1) == 1
+        and _passable_flag(flag) is not None
+    ]
+
+
+def _synopsis_valued_switches(formal, options):
+    """The indices of the documented switches the synopsis shows taking a value.
+
+    bedtools documents ``-g`` and ``-fi`` with no placeholder, as
+    ``-g\\tProvide a genome file``, and writes ``-g <genome>`` and ``-fi <fasta>``
+    in its synopsis, so each read as a switch followed by a positional, and the
+    task could pass the flag but not the file.  A documented option that takes no
+    value takes one here where the synopsis writes at least one of its spellings
+    and every spelling it writes is among `_flags_before_placeholders`.  The
+    synopsis is the evidence the entry lacks, and the two do not disagree: the
+    entry shows no value rather than showing none is taken.  An option
+    `_passable_flag` rejects takes none, since `transform` leaves it out.
+
+    A short flag whose letter the synopsis also writes inside a stack of letters
+    takes none either: given a value, ``-p`` would take the ``z`` of ``-pz`` as it,
+    so a documented ``-z`` taking a value would no longer take the token after the
+    stack, and the synopsis could stop parsing.
+    """
+    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    flags = _flags_before_placeholders(tokens)
+    written = {token.partition("=")[0] for token in tokens}
+    stacked = {
+        "-" + letter
+        for token in tokens
+        if token.startswith("-") and not token.startswith("--") and len(token) > 2
+        for letter in token[1:]
+    }
+    switches = []
+    for index, opt in enumerate(options):
+        spellings = [flag for flag in (opt.short, opt.long) if flag in written]
+        if (
+            opt.argcount == 0
+            and spellings
+            and all(flag in flags for flag in spellings)
+            and opt.short not in stacked
+            and _passable_flag(opt.name) is not None
+        ):
+            switches.append(index)
+    return switches
+
+
+def _flags_before_placeholders(tokens):
+    """The flags of `parse_pattern`'s `tokens` that a placeholder always follows.
+
+    That is, every token spelling the flag directly precedes a placeholder, as
+    ``-a <bed>`` does.
+
+    A flag here is a long flag without ``=`` or a short flag of one letter, and a
+    placeholder a token `parse_atom` reads as an argument, angle-bracketed or in
+    capitals.  Given a value, such a flag takes a token that would otherwise be a
+    positional, never a bracket, a bar or a command word, so giving it one never
+    stops a synopsis from parsing.  A value read from an option's description
+    could: given one, bedtools slop's ``-r`` would take the ``)`` of
+    ``(-l and -r)``.  For the same reason a short flag whose letter ends a stack of
+    letters, as ``z`` ends ``-pz``, is not among them, since the stack would take
+    the token after it.  A placeholder followed by ``...`` is taken as one value,
+    so ``-i <file>...`` passes one file: read as a positional list, the files would
+    precede the flag.
+    """
     followed = {}
     for token, after in zip(tokens, [*tokens[1:], ""]):
         long = token.startswith("--") and token != "--" and "=" not in token
         short = len(token) == 2 and token[0] == "-" and token[1] != "-"
-        if (long or short) and token not in declared:
+        if long or short:
             followed[token] = followed.get(token, True) and _is_placeholder(after)
     stacked = {
         "-" + token[-1]
         for token in tokens
         if token.startswith("-") and not token.startswith("--") and len(token) > 2
     }
-    return [
-        docopt.Option(None, flag, 1)
-        if flag.startswith("--")
-        else docopt.Option(flag, None, 1)
-        for flag, always in followed.items()
-        if always
-        and flag not in stacked
-        and twin_argcount.get(flag, 1) == 1
-        and _passable_flag(flag) is not None
-    ]
+    return [flag for flag, always in followed.items() if always and flag not in stacked]
 
 
 def _is_placeholder(token):

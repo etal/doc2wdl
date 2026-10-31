@@ -705,12 +705,12 @@ def test_a_synopsis_naming_an_alias_passes_the_documented_option_once(capsys):
 
 
 @pytest.mark.parametrize(
-    "synopsis", ["date [-u|--utc|--universal] FILE", "date --utc FILE"]
+    "synopsis", ["date [-u|--utc|--universal] FILE", "date --utc [FILE]"]
 )
 def test_an_alias_of_a_switch_does_not_take_the_next_positional(synopsis):
     """GNU date names every spelling of `-u, --utc, --universal` in its usage.
 
-    Read as undocumented, `--utc` before `FILE` would take it as its value.
+    Read as undocumented, `--utc` would be a second input.
     """
     doc = f"Usage: {synopsis}\n\n  -u, --utc, --universal  Use UTC.\n"
     parsed = docopter.parse(doc)
@@ -1153,20 +1153,17 @@ def test_a_documented_flag_of_several_letters_after_one_dash_is_no_stack(capsys)
     """bedtools documents `-fi` and `-bed`, which docopt read as stacks of letters.
 
     bedtools rejects each letter, `-f` among them, as an unrecognized parameter.
+    The synopsis writes each before its file, which each then takes.
     """
     doc = GETFASTA.format(synopsis="-fi <fasta> -bed <bed/gff/vcf>")
     parsed = docopter.parse(doc)
     assert capsys.readouterr().err == ""
-    assert [(opt.short, opt.long) for opt in parsed.options] == [
-        ("-fi", None),
-        ("-bed", None),
-        ("-s", None),
+    assert [(opt.short, opt.long, opt.argcount) for opt in parsed.options] == [
+        ("-fi", None, 1),
+        ("-bed", None, 1),
+        ("-s", None, 0),
     ]
-    assert [p.spellings for p in parsed.positionals] == [
-        ["OPTIONS"],
-        ["<fasta>"],
-        ["<bed/gff/vcf>"],
-    ]
+    assert [p.spellings for p in parsed.positionals] == [["OPTIONS"]]
 
 
 @pytest.mark.parametrize(
@@ -1193,6 +1190,36 @@ def test_a_single_dash_flag_is_one_flag_only_where_that_reads_safely(
     parsed = docopter.parse(f"Usage: tool {synopsis}\n\nOptions:\n  {entry}\n")
     assert capsys.readouterr().err == ""
     assert [p.spellings for p in parsed.positionals] == spellings
+
+
+@pytest.mark.parametrize(
+    "synopsis, takes_value, spellings",
+    [
+        # bedtools genomecov documents `-g` with no placeholder.
+        ("tool -g <genome> <in>", True, [["<in>"]]),
+        # Through an alias: `--utc` names the documented `--universal`.
+        ("tool --utc <genome> <in>", True, [["<in>"]]),
+        # One occurrence is followed by no placeholder.
+        ("tool -g <genome> <in>\n       tool [-g]", False, [["<genome>"], ["<in>"]]),
+        # `-dg` would give the token after it to `-g`.
+        ("tool -dg <genome> <in>", False, [["<genome>"], ["<in>"]]),
+        # Given a value, `-g` would take the `d` of `-gd` as it.
+        ("tool -g <genome> -gd <in>", False, [["<genome>"], ["<in>"]]),
+    ],
+)
+def test_a_documented_switch_always_before_a_placeholder_takes_it(
+    synopsis, takes_value, spellings
+):
+    """The synopsis shows the value that bedtools' options block never writes."""
+    doc = (
+        f"Usage: {synopsis}\n\nOptions:\n"
+        "  -g, --utc, --universal  Provide a genome file.\n  -d  Report depth.\n"
+    )
+    parsed = docopter.parse(doc)
+    assert [p.spellings for p in parsed.positionals] == spellings
+    args = {arg.option_flag: arg for arg in docopter.transform(*parsed)["cli_args"]}
+    assert args["--universal"].option_has_value is takes_value
+    assert args["-d"].option_has_value is False
 
 
 def test_tabs_advance_to_stops_eight_columns_apart():
