@@ -697,10 +697,15 @@ def _repeated_options(pattern):
     entry instead states how many values one occurrence takes, which `repeated`
     records, so `transform` reads the two together.
 
-    Only a repetition holding exactly one option that takes a value is read.  A
-    repeated switch is a count, which no target language can express, and a
-    repetition over two options taking values, as in ``(-a <x> -b <y>)...``,
-    repeats the pair rather than either flag.
+    Only a repetition holding exactly one option that takes a value is read, or one
+    holding a choice among alternatives, as `_alternatives` finds it, none of which
+    names two such options: each occurrence then passes one flag, so every option
+    of the choice that takes a value repeats on its own.  That is the shape
+    `_distributed_values` gives git's ``(-c | -C) <commit>`` when a ``...`` follows
+    the placeholder, ``(-c <commit> | -C <commit>)...``.  A repeated switch is a
+    count, which no target language can express, and a repetition over two options
+    taking values, as in ``(-a <x> -b <y>)...``, repeats the pair rather than
+    either flag, so a choice with such an alternative is not read either.
 
     A repetition over one option written in two alternatives, as in
     ``(-e <p> | --regexp <p>)...`` for ``-e, --regexp``, is a repetition over that
@@ -708,12 +713,33 @@ def _repeated_options(pattern):
     """
     repeated = []
     for node in pattern.flat(docopt.OneOrMore):
-        valued = {
-            (opt.short, opt.long) for opt in node.flat(docopt.Option) if opt.argcount
-        }
-        if len(valued) == 1:
-            repeated.extend(valued)
+        branches = _alternatives(node) or [node]
+        valued = [
+            {
+                (opt.short, opt.long)
+                for opt in branch.flat(docopt.Option)
+                if opt.argcount
+            }
+            for branch in branches
+        ]
+        if all(len(options) <= 1 for options in valued):
+            repeated.extend(dict.fromkeys(key for options in valued for key in options))
     return repeated
+
+
+def _alternatives(node):
+    """The alternatives of the choice a repetition holds, or None where it holds none.
+
+    The choice may be wrapped in groups of one child, as ``[(-a | -b) <x>]...`` is,
+    once `_distributed_values` has moved the placeholder into each alternative.
+    """
+    while isinstance(node, docopt.ParentPattern) and not isinstance(
+        node, docopt.Either
+    ):
+        if len(node.children) != 1:
+            return None
+        node = node.children[0]
+    return node.children if isinstance(node, docopt.Either) else None
 
 
 def _readings(formal, entries):

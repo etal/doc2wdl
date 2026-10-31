@@ -1165,7 +1165,32 @@ def test_a_repetition_over_both_spellings_of_one_option_is_its_list():
     ] == [("", False, False), ("--input", True, True)]
 
 
-@pytest.mark.parametrize("synopsis", ["[-v]...", "(-a <x> -b <y>)...", "-a <x> <y>..."])
+@pytest.mark.parametrize(
+    "synopsis, entry",
+    [
+        # The placeholder after the group is moved into each alternative.
+        ("(-a | -b) <x>...", "  -a <x>  A.\n  -b <x>  B.\n"),
+        ("(-a | -b) <x>...", ""),
+        ("[(-a | -b) <x>]...", ""),
+        ("(-a <x> | -b <y> | -v)...", ""),
+    ],
+)
+def test_a_repetition_over_a_choice_of_options_repeats_each(synopsis, entry, capsys):
+    """Each occurrence of `(-a <x> | -b <x>)...` passes one flag, so each repeats."""
+    doc = f"Usage: tool {synopsis} <in>\n\nOptions:\n{entry}"
+    task = docopter.transform(*docopter.parse(doc))
+    assert capsys.readouterr().err == ""
+    assert [
+        (arg.option_flag, arg.is_array, arg.flag_per_value)
+        for arg in task["cli_args"]
+        if arg.option_has_value
+    ] == [("-a", True, True), ("-b", True, True)]
+
+
+@pytest.mark.parametrize(
+    "synopsis",
+    ["[-v]...", "(-a <x> -b <y>)...", "-a <x> <y>...", "(-a <x> | -b <y> -c <z>)..."],
+)
 def test_a_repetition_that_is_no_options_list_makes_no_array(synopsis):
     """A repeated switch is a count, and a repeated pair repeats neither flag alone."""
     task = docopter.transform(*docopter.parse(f"Usage: tool {synopsis}\n"))

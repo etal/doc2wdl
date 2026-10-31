@@ -737,6 +737,16 @@ Where an entry joins two distinct options, the name now disagrees with the flag 
 An entry that writes a negation before its flag, as in `--no-x, --x`, is not read as a switch with a flag for false either, so it names `no_x` and passes `--x`; no surveyed help text writes one.
 Each changed document passes `miniwdl check` and `nextflow lint`.
 
+**D46** — a repetition over a choice of options taking values made no array.
+D43 rewrites `(-a | -b) <x>...` to `(-a <x> | -b <x>)...`, and the `...`, which bound to `<x>` as written, then repeats the group, a choice between two options, which D44's rule of exactly one option taking a value declined, so each flag was a scalar.
+Before D43 the same synopsis declared an array positional `x` and two switches where neither flag was documented, and degraded where both were documented as taking a value, since `-a` took the bar and `-b` the closing parenthesis.
+`_repeated_options` now also reads a repetition holding a choice, through groups of one child, as `docopter._alternatives` finds it, where no alternative names two options taking a value: each occurrence passes one flag, so every option of the choice that takes a value repeats on its own, its flag before each value, as D44 reads one option.
+A choice with an alternative holding a pair, as in `(-a <x> | -b <y> -c <z>)...`, is declined whole, and a choice nested in another is not read.
+Declining the distribution before `...`, which would restore the positional, was measured and not adopted: over the 21,435,887 token sequences of one to seven tokens drawn from `[ ] ( ) | ... -c -C --sq <x> w`, 45 stop parsing with the three flags documented as taking values, and it would not reach `[(-a | -b) <x>]...`, whose `...` follows the bracket.
+The repetition is read from the tree once it parses, and no text is rewritten, so no synopsis starts or stops parsing.
+The order of occurrences is not kept: `-a 1 -b 3 -a 2` is passed as `-a 1 -a 2 -b 3`, as for any two arrays, and a tool that rejects both flags in one command line is not modeled.
+Over the 242 help texts no record changes: of their 169 repetitions, 160 hold no option taking a value and 9 exactly one.
+
 ### Working on the vendored parser
 
 `doc2wrapper/_docopt.py` is docopt 0.6.2 with every definition of the runtime argv-matching path deleted whole, and `parse_defaults` with it, and nothing else changed except two regex literals that gained the `r` prefix they always needed.
