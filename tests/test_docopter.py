@@ -920,6 +920,44 @@ def test_an_optional_attached_value_in_the_synopsis_is_no_positional(
     assert args["--context"].option_has_value is takes_value
 
 
+@pytest.mark.parametrize(
+    "synopsis, entry, spellings, inputs_",
+    [
+        # BSD grep documents no `-C`, which stays the switch it was.
+        ("[-C[num]] FILE", "", [["FILE"]], [("-C", False)]),
+        # git documents `-u` with a value, which the retry reads as written.
+        (
+            "[-u[<mode>]] FILE",
+            "-u, --untracked-files[=<mode>]  Show.",
+            [["FILE"]],
+            [("--untracked-files", False)],
+        ),
+        # Without the group, `-C` would take the word after it as its value.
+        ("-C[num] pattern", "", [["num"], ["pattern"]], [("-C", False)]),
+        # `-p` takes `-C` as its value, so the group is no value of `-C`.
+        ("-p -C[N] FILE", "-p P  Pick.", [["N"], ["FILE"]], [("-p", True)]),
+    ],
+)
+def test_a_value_attached_to_a_short_flag_in_the_synopsis_is_no_positional(
+    synopsis, entry, spellings, inputs_, capsys
+):
+    """grep writes `[-C[num]]`, which `parse_pattern` reads as `[-C] [num]`."""
+    doc = (
+        f"usage: grep {synopsis}\n\n  {entry}\n"
+        if entry
+        else f"usage: grep {synopsis}\n"
+    )
+    parsed = docopter.parse(doc)
+    assert capsys.readouterr().err == ""
+    assert [p.spellings for p in parsed.positionals] == spellings
+    task = docopter.transform(*parsed)
+    assert [
+        (arg.option_flag, arg.option_has_value)
+        for arg in task["cli_args"]
+        if arg.option_flag
+    ] == inputs_
+
+
 def descriptions(doc):
     """Each parsed option's ``(short, long)`` flags and description."""
     options = docopter.parse(doc).options

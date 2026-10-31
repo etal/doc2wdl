@@ -87,6 +87,13 @@ _ATTACHED_VALUE = re.compile(r"\[[^\[\]]*\]$")
 # the text it matches is balanced.  `_without_value_prefixes` reads it.
 _VALUE_PREFIX = re.compile(r"(?<=\s)\[(?:[^\[\]()]|\([^()]*\))*\](?=\S)")
 
+# A value a synopsis writes optional and attached to a one-letter short flag, as
+# BSD grep writes `[-C[num]]` and git `[-u[<mode>]]`.  Only the text shows that the
+# group is attached, as it shows an optional prefix, so `_without_attached_shorts`
+# reads it there.  A flag of several letters is left out: BSD sort's
+# `-kPOS1[,POS2]` and Info-ZIP's `-opts[modifiers]` attach the group to a value.
+_ATTACHED_SHORT = re.compile(r"(?<![-\w])(-[^-\s\[\]()|])\[[^\s\[\]|]+\](?![\w\[])")
+
 # A short and a long spelling of one flag joined by a bar, as SRA Toolkit and npm
 # write `-A|--accession`, and a flag followed by an ellipsis, as clap writes a
 # counted flag, `--verbose...`.  `_documented_options` reads the first as
@@ -610,7 +617,9 @@ def _read_command_line(printable, usage, options):
     argument.
 
     The text is read with the prefixes `_without_value_prefixes` describes
-    removed, and then as written.  Each text has its flags respelled as
+    removed, and then as written, and each loses the values attached to a short
+    flag that `_without_attached_shorts` describes, which cannot stop it from
+    parsing.  Each text then has its flags respelled as
     `_carried_spellings` and `_single_dash_spellings` describe and the repetition
     `_without_value_repeats` describes removed, none of which can stop it from
     parsing, and is read as `_readings` describes, first with the values that
@@ -627,6 +636,7 @@ def _read_command_line(printable, usage, options):
     prefixed = _without_value_prefixes(formal, options)
     readings = []
     for text in dict.fromkeys([prefixed, formal]):
+        text = _without_attached_shorts(text, options)
         text, entries = _single_dash_spellings(
             _carried_spellings(text, options), options
         )
@@ -1197,6 +1207,50 @@ def _without_value_prefixes(formal, options):
         return match.group()
 
     return _VALUE_PREFIX.sub(without, formal)
+
+
+def _without_attached_shorts(formal, options):
+    """Remove a value attached to a short flag: ``-C[num]`` becomes ``-C``.
+
+    BSD grep writes ``[-C[num]]`` and git ``[-u[<mode>]]`` and ``[-S[<keyid>]]``
+    for a flag whose value is optional and must be attached to it.
+    `parse_pattern` pads the brackets, so among its tokens ``-C [ num ]`` cannot
+    be told from a switch followed by an optional positional, ``[-C] [num]``, and
+    each record declared a positional named after the value beside the switch.
+    Only the text shows that the group is attached, which is why this runs on
+    `formal` as `formal_usage` writes it, before any rewrite joins its tokens with
+    spaces, as `_without_value_prefixes` does.
+
+    The flag stays the switch it was, as `_without_attached_values` leaves the long
+    form ``--context[=num]``.  git accepts a bare ``-u`` and ``-S`` and reads a
+    word after either as a path, so the switch is the one form a task can pass;
+    BSD grep 2.6.0 instead rejects a bare ``-C`` and reads ``-C 2`` as the count,
+    which the text does not tell apart, so its switch stays as wrong as it was,
+    and only the positional the value declared is removed.
+
+    The group is left as written where an option reads its ``[`` as its value,
+    for `_without_value_brackets` to read on the retry, as git documents ``-u``
+    and ``-S`` with a value; where an option reads the flag itself as its value,
+    as in ``-p -C[N]``; and where a placeholder or a lowercase word follows it,
+    since `_flags_before_placeholders` would read that token as the value of the
+    bare flag, so ``-C[num] pattern`` would pass the pattern to ``-C``.  The group
+    is removed whole, so every other bracket stays matched, as
+    `_without_value_repeats` argues, and no option takes a token it did not take
+    before.  The text is returned unchanged where no group is removed.
+    """
+    tokens = _tokens(formal)
+    taken = _value_indices(tokens, options)
+
+    def without(match):
+        flag = len(_tokens(formal[: match.start()]))
+        after = _tokens(formal[match.end() :])[:1]
+        if not taken.isdisjoint((flag, flag + 1)):
+            return match.group()
+        if after and (_is_placeholder(after[0]) or _is_command_word(after[0])):
+            return match.group()
+        return match.group(1)
+
+    return _ATTACHED_SHORT.sub(without, formal)
 
 
 def _distributed_values(formal, options):
