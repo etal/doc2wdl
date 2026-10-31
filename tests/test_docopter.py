@@ -1059,6 +1059,9 @@ def test_a_type_bullet_leaves_the_synopsis_reading_alone(capsys):
     [
         ("-g", "<genome>", "g"),
         ("--log-dir", "LOG_DIR", "log_dir"),
+        # BSD writes a lowercase placeholder, which docopt reads as a command word.
+        ("-f", "file", "f"),
+        ("--files0-from", "file", "files0_from"),
         # One value: as a positional list, the files would precede the flag.
         ("-i", "<file>...", "i"),
     ],
@@ -1082,8 +1085,8 @@ def test_an_undocumented_flag_before_a_placeholder_takes_it_as_its_value(
 @pytest.mark.parametrize(
     "synopsis, spellings",
     [
-        # One occurrence is followed by a command word, which a value would take.
-        ("[-x <n>] [-x word]", [["<n>"], ["word"]]),
+        # One occurrence is followed by a bracket, which a value would take.
+        ("[-x <n>] [-x] word", [["<n>"], ["word"]]),
         # `-pz` would give the token after it to `-z`.
         ("-z <x> -pz run", [["<x>"], ["run"]]),
         # `transform` leaves out a flag written in notation, and its value with it.
@@ -1096,6 +1099,28 @@ def test_a_synopsis_flag_takes_no_value_where_a_positional_would_be_lost(
     """Each flag takes no value, so the token after it stays a positional."""
     positionals = docopter.parse(f"Usage: tool {synopsis}\n").positionals
     assert [p.spellings for p in positionals] == spellings
+
+
+@pytest.mark.parametrize(
+    "synopsis, flags",
+    [
+        ("[-V t | nil | never] [-t ecdsa | ecdsa-sk | rsa] <x>", ["-V", "-t"]),
+        ("[-O fmt | -o fmt] <x>", ["-O", "-o"]),
+    ],
+)
+def test_a_choice_of_words_for_a_flags_value_is_no_positional(synopsis, flags, capsys):
+    """BSD patch writes `[-V t | nil | never]`; the flag takes one of the words.
+
+    Alternatives that hold more than one word, such as another flag and its value,
+    are kept, and each flag takes its own value.
+    """
+    task = docopter.transform(*docopter.parse(f"usage: tool {synopsis}\n"))
+    assert capsys.readouterr().err == ""
+    assert [(arg.option_flag, arg.option_has_value) for arg in task["cli_args"]] == [
+        ("", False),
+        *[(flag, True) for flag in flags],
+    ]
+    assert task["cli_prefix"] == "tool"
 
 
 @pytest.mark.parametrize(

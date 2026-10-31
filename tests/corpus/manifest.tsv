@@ -21,7 +21,7 @@ miniwdl-check	parsed	stdout	miniwdl 1.14.2	miniwdl check --help	argparse's WDL_U
 tabix	parsed	stdout	htslib 1.23.1	tabix --help	[OPTIONS] and ... read as positionals
 bedtools-intersect	parsed	stderr	bedtools 2.31.1	bedtools intersect --help	[OPTIONS] read as a positional; -a and -b, which the options block omits, take the placeholders the synopsis writes after them; -f and -F, whose descriptions name the value's type, take a value, while options whose value only prose describes, such as -g and -iobuf, read as switches
 htsfile	parsed	stdout	htslib 1.23.1	htsfile --help	positionals recovered cleanly; the options block directly under the synopsis ends it
-ls	parsed	stderr	macOS 26.6.2	/bin/ls --help	no options block, so the value of -D is read as a positional
+ls	parsed	stderr	macOS 26.6.2	/bin/ls --help	no options block; -D takes the lowercase word written after it as its value, and [file ...] is the one positional
 jq	parsed	stdout	jq 1.7.1-apple	jq --help	<jq filter> split at its space
 cnvkit-import-rna	parsed	stdout	CNVkit 0.9.15.dev0	cnvkit.py import-rna -h	FILES [FILES ...] read as two positionals, while -n NORMAL [NORMAL ...] is one option taking a list; a wrapped line opening with --normal is prose, and its [Default: polish] is --normalize-method's
 samtools-merge	parsed	stdout	samtools 1.23.1	samtools merge	GNU's or: continues the synopsis; both alternatives begin samtools merge and align by position, so -o takes <out.bam> in the first while the second's <out.bam> shares the first slot with <in1.bam> ...

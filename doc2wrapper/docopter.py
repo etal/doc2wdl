@@ -568,10 +568,13 @@ def _read_command_line(printable, usage, options):
     for index in switches:
         taking[index] = copy.copy(entries[index])
         taking[index].argcount, taking[index].value = 1, None
-    readings = [[*taking, *valued], entries] if valued or switches else [entries]
-    for number, reading in enumerate(readings):
+    readings = [(formal, entries)]
+    if valued or switches:
+        taking = [*taking, *valued]
+        readings.insert(0, (_without_literal_alternatives(formal, taking), taking))
+    for number, (text, reading) in enumerate(readings):
         try:
-            pattern = _read_pattern(formal, reading)
+            pattern = _read_pattern(text, reading)
         except docopt.DocoptLanguageError as error:
             why = error
         else:
@@ -816,7 +819,12 @@ def _synopsis_valued_options(formal, options):
     `parse_long` gives one only where its token carries ``=``, so bedtools'
     ``-a <bed/gff/vcf/bam>``, which no entry documents, reads as a switch followed
     by a positional.  A flag gets a value here when no entry documents its exact
-    spelling and `_flags_before_placeholders` holds it.
+    spelling and `_flags_before_placeholders` holds it, counting a lowercase word
+    after the flag as a placeholder: BSD synopses, which come with no options
+    block, write ``[-f file]`` and ``[-e pattern]``, which docopt reads as a
+    switch followed by a command word.  The cost is a switch written directly
+    before a lowercase operand, as BSD tr writes ``tr [-Ccu] -d string1``, which
+    takes the operand as its value.
 
     A flag that `_passable_flag` rejects, such as absl's ``--apilog:``, takes no
     value, since `transform` leaves such an option out and its value would go with
@@ -836,7 +844,7 @@ def _synopsis_valued_options(formal, options):
         docopt.Option(None, flag, 1)
         if flag.startswith("--")
         else docopt.Option(flag, None, 1)
-        for flag in _flags_before_placeholders(tokens)
+        for flag in _flags_before_placeholders(tokens, words=True)
         if flag not in declared
         and twin_argcount.get(flag, 1) == 1
         and _passable_flag(flag) is not None
@@ -884,7 +892,7 @@ def _synopsis_valued_switches(formal, options):
     return switches
 
 
-def _flags_before_placeholders(tokens):
+def _flags_before_placeholders(tokens, words=False):
     """The flags of `parse_pattern`'s `tokens` that a placeholder always follows.
 
     That is, every token spelling the flag directly precedes a placeholder, as
@@ -892,22 +900,27 @@ def _flags_before_placeholders(tokens):
 
     A flag here is a long flag without ``=`` or a short flag of one letter, and a
     placeholder a token `parse_atom` reads as an argument, angle-bracketed or in
-    capitals.  Given a value, such a flag takes a token that would otherwise be a
-    positional, never a bracket, a bar or a command word, so giving it one never
-    stops a synopsis from parsing.  A value read from an option's description
-    could: given one, bedtools slop's ``-r`` would take the ``)`` of
+    capitals, or, with `words`, a lowercase word, which it reads as a command
+    word.  Given a value, such a flag takes a token that would otherwise be a
+    positional or a command word, never a bracket, a bar or an ellipsis, so giving
+    it one never stops a synopsis from parsing.  A value read from an option's
+    description could: given one, bedtools slop's ``-r`` would take the ``)`` of
     ``(-l and -r)``.  For the same reason a short flag whose letter ends a stack of
     letters, as ``z`` ends ``-pz``, is not among them, since the stack would take
     the token after it.  A placeholder followed by ``...`` is taken as one value,
     so ``-i <file>...`` passes one file: read as a positional list, the files would
     precede the flag.
+
+    A command word taken as a value never shortens the CLI prefix: the command
+    words `_command_words` reads follow the program name directly, never a flag.
     """
     followed = {}
     for token, after in zip(tokens, [*tokens[1:], ""]):
         long = token.startswith("--") and token != "--" and "=" not in token
         short = len(token) == 2 and token[0] == "-" and token[1] != "-"
         if long or short:
-            followed[token] = followed.get(token, True) and _is_placeholder(after)
+            taken = _is_placeholder(after) or (words and _is_command_word(after))
+            followed[token] = followed.get(token, True) and taken
     stacked = {
         "-" + token[-1]
         for token in tokens
@@ -980,6 +993,40 @@ def _without_value_repeats(formal, options):
             continue
         if tokens[end + 1 : end + 5] == ["[", placeholder, "...", "]"]:
             removed.update(range(end + 1, end + 5))
+    if not removed:
+        return formal
+    return " ".join(token for i, token in enumerate(tokens) if i not in removed)
+
+
+def _without_literal_alternatives(formal, options):
+    """Keep only the first of the literal words a group offers an option's value.
+
+    BSD patch writes ``[-V t | nil | never | none]`` and ssh-keygen
+    ``[-t ecdsa | ecdsa-sk | rsa]``: a group that opens with a flag whose value is
+    one of several lowercase words.  Given its value, the flag takes the first
+    word, and the others would remain alternatives of their own, each read as a
+    positional.  Each ``| word`` that follows the value within such a group is
+    removed, where every alternative is one word.  A group whose alternatives
+    hold anything else, as ``[-O fmt | -o fmt]`` does, stays as written.
+
+    Only bars and words are removed, never a bracket, and `_read_command_line`
+    reads the text as written where the result does not parse.  The text is
+    returned unchanged where nothing is removed.
+    """
+    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    removed = set()
+    for _option, value in _valued_options(tokens, options):
+        if value < 2 or tokens[value - 2] != "[":
+            continue
+        if not _is_command_word(tokens[value]):
+            continue
+        end = value + 1
+        while tokens[end : end + 1] == ["|"] and _is_command_word(
+            tokens[end + 1] if end + 1 < len(tokens) else ""
+        ):
+            end += 2
+        if end > value + 1 and tokens[end : end + 1] == ["]"]:
+            removed.update(range(value + 1, end))
     if not removed:
         return formal
     return " ".join(token for i, token in enumerate(tokens) if i not in removed)

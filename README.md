@@ -56,7 +56,7 @@ Known issues
 - A positional argument with no other evidence of its type is a `File`, which is right for most bioinformatics tools and wrong for one that is not a path, such as samtools' `region`, a genomic interval; change it to `String` by hand.
   Help text shows no type for an option, so an option that takes a value is typed from help text only by its `[default: ...]` literal, or by a type its description names on a line of its own, as bedtools writes `- FLOAT (e.g. 0.50)`, and is otherwise a `String`.
   An option whose entry writes no placeholder for its value and names no such type becomes a Boolean, so the generated task cannot pass its value, unless the synopsis writes a placeholder directly after every mention of it, as bedtools genomecov writes `-g <genome>`; bedtools intersect's `-g`, which its synopsis does not name, stays a Boolean.
-  A flag that no entry documents takes a value under the same condition, as bedtools writes `-a <bed/gff/vcf/bam>`.
+  A flag that no entry documents takes a value where the synopsis writes a placeholder directly after every mention of it, as bedtools writes `-a <bed/gff/vcf/bam>`, or a lowercase word, as BSD tools write `[-f file]`; a switch that the synopsis writes directly before a lowercase operand, as BSD `tr` writes `-d string1`, then takes the operand as its value, and its input needs correcting by hand.
 - Help text gives `parameter_meta` an option's description when it follows the flags on the same line after at least two spaces, which is docopt's rule, or when it begins on the lines after the flags; samtools writes `-R, --read-group-file FILE ...are in a read group listed in FILE` with one space, so that description is empty.
   A description ends at a blank line or at a line indented no deeper than its option, so only its first paragraph is kept.
   A positional argument takes the description of an entry that names it in the same layout, as argparse lists it under "positional arguments:", followed by its alternative spellings, if it has any.
@@ -71,7 +71,7 @@ Known issues
 
 Reading help text is best-effort by nature, and its limits are recorded rather than guessed.
 `tests/corpus/` holds 17 help texts captured from real tools, chosen to represent the shapes the reader meets rather than as a sample, and `tests/corpus/manifest.tsv` records the command that produced each and what the reader makes of it.
-Three of the 17 produce no usable usage line at all, one loses its positional arguments while keeping its options, and thirteen parse, of which three yield exactly the tool's positional arguments; the others add placeholders such as `[OPTIONS]` or option values, split one argument in two, or align the arguments of alternative synopses by position.
+Three of the 17 produce no usable usage line at all, one loses its positional arguments while keeping its options, and thirteen parse, of which four yield exactly the tool's positional arguments; the others add placeholders such as `[OPTIONS]` or option values, split one argument in two, or align the arguments of alternative synopses by position.
 The reliable shape is a single usage synopsis naming at most one fixed subcommand, written directly after the program name, in which no flag's arity differs between the options list and the synopsis, and which ends at a blank line, at a line indented less than the program name, or, where the `Usage:` marker stands alone on its line, at a line of prose.
 A Cobra heading that reads `USAGE` without a colon is not found at all.
 
