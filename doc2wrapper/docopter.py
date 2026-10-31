@@ -549,9 +549,13 @@ def _read_command_line(printable, usage, options):
 
     Before the first reading, flags are respelled as `_carried_spellings` and
     `_single_dash_spellings` describe, and the repetition `_without_value_repeats`
-    describes is removed; none of these can stop a usage line from parsing.  One
-    that does not parse is read once more as `_read_pattern` describes.  With no
-    tree to confirm them, the command words are those of the text alone.
+    describes is removed; none of these can stop a usage line from parsing.  Each
+    reading then removes the groups `_without_attached_values` describes, and the
+    reading with values the words `_without_literal_alternatives` describes, after
+    the values are decided, so that ``--context[=N] FILE`` does not give ``FILE``
+    to ``--context``.  A usage line that does not parse is read once more as
+    `_read_pattern` describes.  With no tree to confirm them, the command words are
+    those of the text alone.
     """
     words = _command_words(usage)
     documented = len(options)
@@ -568,10 +572,11 @@ def _read_command_line(printable, usage, options):
     for index in switches:
         taking[index] = copy.copy(entries[index])
         taking[index].argcount, taking[index].value = 1, None
-    readings = [(formal, entries)]
+    readings = [(_without_attached_values(formal, entries), entries)]
     if valued or switches:
         taking = [*taking, *valued]
-        readings.insert(0, (_without_literal_alternatives(formal, taking), taking))
+        text = _without_attached_values(formal, taking)
+        readings.insert(0, (_without_literal_alternatives(text, taking), taking))
     for number, (text, reading) in enumerate(readings):
         try:
             pattern = _read_pattern(text, reading)
@@ -993,6 +998,47 @@ def _without_value_repeats(formal, options):
             continue
         if tokens[end + 1 : end + 5] == ["[", placeholder, "...", "]"]:
             removed.update(range(end + 1, end + 5))
+    if not removed:
+        return formal
+    return " ".join(token for i, token in enumerate(tokens) if i not in removed)
+
+
+def _without_attached_values(formal, options):
+    """Remove an optional value attached to a long flag: ``--context[=num]``.
+
+    BSD grep writes ``[--context[=num]]`` and git ``[--exec-path[=<path>]]`` for a
+    flag whose value is optional and must be attached with ``=``.  No entry
+    documents either flag, so `parse_long` registered a switch and the group became
+    an optional positional named after the value.  Without the group the flag
+    stays the switch, the one form of the two a task can pass, as `_takes_value`
+    reads an entry that writes a flag both bare and with a value attached; a task
+    passes a value after a space, which both tools read as an argument of its own.
+
+    The group's one token keeps the ``=`` the text attached to it, since
+    `parse_pattern` pads only the brackets, so a bracketed token opening with ``=``
+    can come from nothing else.  tree's ``--gitfile[=]file``, whose brackets hold
+    the ``=`` alone, writes a required value whose separator is optional, and is
+    left as written.
+
+    Removing a whole bracketed group leaves every other bracket matched, as
+    `_without_value_repeats` describes, so the removal could stop a synopsis from
+    parsing only by taking the ``[`` from an option that reads it as its value, as
+    a documented ``--color`` taking a value would in ``[--color[=WHEN]]``.
+    `_valued_options` names those tokens, and such a group is left as written for
+    `_without_value_brackets` to read on the retry.  The text is returned
+    unchanged where no group is removed.
+    """
+    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    consumed = {value for _option, value in _valued_options(tokens, options)}
+    removed = set()
+    for index, token in enumerate(tokens[:-3]):
+        if not token.startswith("--") or token == "--" or "=" in token:
+            continue
+        opening, value, closing = tokens[index + 1 : index + 4]
+        if opening != "[" or closing != "]" or value[:1] != "=" or value == "=":
+            continue
+        if index + 1 not in consumed:
+            removed.update(range(index + 1, index + 4))
     if not removed:
         return formal
     return " ".join(token for i, token in enumerate(tokens) if i not in removed)

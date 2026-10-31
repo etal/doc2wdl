@@ -453,7 +453,7 @@ bq's 15 `--[no]x:` switches stay left out as before; they could be expressed wit
 Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24, 32 records change, none in its CLI prefix or positionals: 59 inputs are renamed after their passable flag, such as `A__accession` to `accession`, 90 are left out, and 86 warnings appear.
 In the corpus only `jq` changes, losing the `arg_` input its `--` entry declared; the changed `fastq-dump`, `prefetch`, `npm-install`, `bq`, `uv` and `tree` documents pass `miniwdl check` and `nextflow lint`.
 Both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
-Not covered: a bracketed value spelled inside the synopsis, as in `ls [--color[=WHEN]] FILE`, still registers a switch `--color` and a positional `WHEN`, since the synopsis is read before any flag is rewritten; no captured help text does so.
+Not covered: a bracketed value spelled inside the synopsis, as in `ls [--color[=WHEN]] FILE`, still registered a switch `--color` and a positional `WHEN`, since the synopsis is read before any flag is rewritten; BSD grep's `[--context[=num]]` and git's `[--exec-path[=<path>]]` do so, and D42 reads them.
 
 **D26** — two inputs could pass the same flag.
 The writer makes names unique, never flags, and the help-text reader produced options that pass one flag from three sources: an option documented twice, as gcc documents `-fcf-protection` both as a switch and as `-fcf-protection=<value>`; a line of prose read as an entry; and a synopsis-only option whose spelling the options block writes otherwise, since `parse_pattern` compares the synopsis's `--dry-run` with the documented `--[no-]dry-run` before D21 rewrites it, finds no match, and appends an option of its own.
@@ -681,6 +681,18 @@ No condition on the text was found that excludes those two without excluding rea
 bsd-sort and bsd-zip each lose switches that letters of a stack declared, as D34 described for genomecov, since a flag given a value now takes the rest of the stack: sort's `-1` and `-2`, from `-kPOS1` and `-POS2`, where `-S` takes the digit after it, and zip's `-s`, from `-options`.
 What remains is other notation: ssh's `-D [bind_address:]port` keeps its two positionals, since `-D` is followed by a bracket, and `-w local_tun[:remote_tun]` keeps `remote_tun`.
 Each changed document passes `miniwdl check` and `nextflow lint`, and both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after; the corpus's `ls` now yields exactly its positional, and its `-D` takes `format`.
+
+**D42** — an optional value attached to a long flag in the synopsis was read as a positional.
+BSD grep writes `[--context[=num]]` and git `[--exec-path[=<path>]]`, with no entry for either flag; `parse_pattern` pads brackets but not `=`, so the group `[ =num ]` held a token docopt reads as a command word, and each record declared a positional `num` or `path` beside the switch.
+`docopter._without_attached_values` now removes such a group, a `[`, a token of `=` followed by at least one character, and a `]`, directly after a long flag written without `=`.
+The flag stays the switch it was, which D37's reading of an entry such as `--check, --check=WORD` makes the one form of the two a task can pass: probed, BSD grep 2.6.0 accepts a bare `--context` and reads `--context 1` as a pattern of `1`, and git 2.56.0 accepts a bare `--exec-path` and does not read the next word as its value.
+tree's `--gitfile[=]file`, whose brackets hold the `=` alone, is left as written, since it writes a required value whose separator is optional.
+The group is removed whole, so every other bracket stays matched, as D22 argues, and where an option reads the `[` as its value, as a documented `--color` taking a value does, the group is left as written for D18's retry; without that condition, of the 8,108,730 token sequences of one to six tokens drawn from `[ ] ( ) | ... --flag --flag=Z --other -p =V = <x> w`, read with `--flag` undocumented, documented as a switch and documented as taking a value, 27 stop parsing and 252 start, and with it, the removal applies 3,101 times and none starts or stops.
+The values of the reading are decided on the text before the removal, so that `--context[=N] FILE` does not give `FILE` to `--context`.
+The short form, as grep writes `-C[num]` and git-commit `-u[<mode>]`, is not read: `parse_pattern`'s tokens cannot tell it from a switch followed by an optional positional, `[-C] [num]`, and BSD grep rejects a bare `-C`.
+An entry written in the same notation, as GNU ls documents `--color[=WHEN]`, is still left out by D21, so a synopsis-only flag of that form is now a switch while a documented one is not; reading the entry form as D37 reads `--check, --check=WORD` would change the 76 options of that notation that D21 leaves out in 25 records, and is a decision of its own.
+Over the 242 help texts, two records change, BSD grep, which loses the positional `num` that `--context[=num]` declared, and git's top level, which loses `path`; no option, outcome class, CLI prefix or warning moves.
+Each changed document passes `miniwdl check` and `nextflow lint`, and both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
 
 ### Working on the vendored parser
 

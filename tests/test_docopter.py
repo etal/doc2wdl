@@ -827,6 +827,37 @@ def test_a_flag_written_with_its_value_spaced_and_attached_takes_a_value():
     assert inputs(doc) == [("--file", "", True, "Read FILE.")]
 
 
+@pytest.mark.parametrize(
+    "synopsis, entry, spellings, takes_value",
+    [
+        # BSD grep documents no `--context`; git writes `--exec-path[=<path>]`.
+        ("[--context[=num]] [--x[=<path>]] FILE", "", [["FILE"]], False),
+        # Decided before the group goes, `--context` does not take `FILE`.
+        ("--context[=num] FILE", "", [["FILE"]], False),
+        # A documented `--context` taking a value takes the bracket as written,
+        # and the retry reads the group as its value.
+        ("[--context[=num]] FILE", "--context=num  Lines.", [["FILE"]], True),
+        # tree's `--gitfile[=]file` writes a required value whose separator is
+        # optional, which the rule leaves as written.
+        ("[--context[=]file] FILE", "", [["="], ["file"], ["FILE"]], False),
+    ],
+)
+def test_an_optional_attached_value_in_the_synopsis_is_no_positional(
+    synopsis, entry, spellings, takes_value, capsys
+):
+    """A task can pass the bare flag, and a value only after a space."""
+    doc = (
+        f"usage: grep {synopsis}\n\n  {entry}\n"
+        if entry
+        else f"usage: grep {synopsis}\n"
+    )
+    parsed = docopter.parse(doc)
+    assert capsys.readouterr().err == ""
+    assert [p.spellings for p in parsed.positionals] == spellings
+    args = {arg.option_flag: arg for arg in docopter.transform(*parsed)["cli_args"]}
+    assert args["--context"].option_has_value is takes_value
+
+
 def descriptions(doc):
     """Each parsed option's ``(short, long)`` flags and description."""
     options = docopter.parse(doc).options
