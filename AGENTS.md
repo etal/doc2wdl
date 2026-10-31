@@ -358,7 +358,7 @@ Over 196 help texts, the fixtures, the corpus and the 180 captured on 2026-10-24
 Those three also gain 39 option declarations named only in what is read as the synopsis, such as `--just-print,` with its comma; no option-block entry or description changes in any of the six.
 Both fixtures generate byte-identical WDL and Nextflow, verified by checksum, and the corpus's `cnvkit.py batch` gains `Array[File] sample_fnames` and passes `miniwdl check` and `nextflow lint`.
 The option keeps its argument count of 1, so the generated input passes `--processes` with a value or not at all, and cannot pass the bare flag, which cnvkit reads as "use every CPU".
-Not covered: an optional prefix of a value, such as curl's `--proxy [protocol://]host`, which the rule would misread in a synopsis that otherwise parses; no captured synopsis does.
+Not covered: an optional prefix of a value, such as curl's `--proxy [protocol://]host`, which the rule would misread in a synopsis that otherwise parses; D43 reads such a prefix where it is written directly before the rest of the value.
 `nargs="+"`, written `-n NORMAL [NORMAL ...]`, whose group follows the value rather than the option, is D22's.
 
 **D19** — the command words were read from the head of the first synopsis line and then removed from the pattern tree wherever their names occurred.
@@ -465,7 +465,7 @@ The flag that decides is the one `_passable_flag` returns, never the input name,
 The rule is in `transform` rather than `parse`, because the option list is `parse_pattern`'s input: removing an option there changes how the synopsis reads its flags, and upstream raises on a flag documented twice that the synopsis names, which is why `conda-create` and `zstd` degrade.
 No arity and no text are merged between the declarations of a flag, so a form is lost where two declarations differ in arity: `du`'s `--time` keeps its switch and loses `--time=WORD`, which `du` accepts only attached.
 Two options that GNU documents with a short flag of their own beside a long flag taking a fixed value, `ls`'s `-p, --indicator-style=slash` and `sort`'s `-C, --check=silent`, are left out, since docopt names each by its long flag.
-Over the 196 help texts 12 records change, each only by losing inputs, and no CLI prefix or positional moves; the git-commit synopsis's `--squash <commit>` still declares a positional `commit`, since the synopsis registers `--squash` as a switch before the rewrite.
+Over the 196 help texts 12 records change, each only by losing inputs, and no CLI prefix or positional moves; the git-commit synopsis's `--squash <commit>` still declared a positional `commit` until D43, since the synopsis registers `--squash` as a switch before the rewrite.
 Both fixtures and the corpus generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
 
 **D27** — a bedtools option that takes a value was read as a switch.
@@ -568,7 +568,7 @@ Since D39 the token `-ibam` names its documented option instead, and `-i` takes 
 Over the 43 bedtools 2.31.1 subcommands that print a `Usage:` marker, 35 records change, 54 options gain a value and 54 positionals disappear.
 Each of the 54 distinct subcommand and flag pairs given a value, passed to the binary before a sentinel token, with the other inputs its subcommand requires, read the sentinel as its value, where a switch such as intersect's `-wa` leaves it to be rejected as an unrecognized parameter.
 Every changed document passes `miniwdl check` and `nextflow lint`, and both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
-Not covered: a placeholder after a group of alternative flags, as git-commit writes `(-c | -C | --squash) <commit>`, where `-c` takes the bar as its value; an optional prefix before the placeholder, as in `--fixup [(amend|reword):]<commit>`; a single-dash flag of several letters, such as bedtools' `-fi <fasta>`, which docopt reads as a stack, until D39; and a lowercase placeholder, such as BSD's `-f file`, which docopt reads as a command word, as it reads a subcommand, until D41.
+Not covered: a placeholder after a group of alternative flags, as git-commit writes `(-c | -C | --squash) <commit>`, where `-c` takes the bar as its value, and an optional prefix before the placeholder, as in `--fixup [(amend|reword):]<commit>`, until D43; a single-dash flag of several letters, such as bedtools' `-fi <fasta>`, which docopt reads as a stack, until D39; and a lowercase placeholder, such as BSD's `-f file`, which docopt reads as a command word, as it reads a subcommand, until D41.
 
 **D35** — a choice group was an input, and prose opening with a positional's name described it.
 argparse writes the subcommands of a subparsers action, and the values of a positional declared with `choices=` and no `metavar`, as a brace group, `{batch,target,...}`, which docopt reads as one placeholder, so cnvkit's top level declared a required `Array[File]+` named after every subcommand at once, and D28 then gave it the whole subcommand list as its description.
@@ -693,6 +693,21 @@ The short form, as grep writes `-C[num]` and git-commit `-u[<mode>]`, is not rea
 An entry written in the same notation, as GNU ls documents `--color[=WHEN]`, is still left out by D21, so a synopsis-only flag of that form is now a switch while a documented one is not; reading the entry form as D37 reads `--check, --check=WORD` would change the 76 options of that notation that D21 leaves out in 25 records, and is a decision of its own.
 Over the 242 help texts, two records change, BSD grep, which loses the positional `num` that `--context[=num]` declared, and git's top level, which loses `path`; no option, outcome class, CLI prefix or warning moves.
 Each changed document passes `miniwdl check` and `nextflow lint`, and both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
+
+**D43** — a placeholder written after a group of alternative flags, or after an optional prefix, was read as a positional.
+git commit's synopsis writes `[(-c | -C | --squash) <commit> | --fixup [(amend|reword):]<commit>]`.
+docopt gives a value-taking flag the next token, so the documented `-c` and `-C` took the bars as their values, the alternatives were lost, and `<commit>` was a positional of the whole group; `--fixup` met the bracket of its value's optional prefix, whose words `amend`, `reword` and `:` became positionals.
+`docopter._distributed_values` now rewrites a parenthesized group whose every alternative is one flag written without `=`, directly followed by a placeholder, so that each alternative carries the placeholder: `(-c <commit> | -C <commit> | --squash <commit>)`.
+A bracketed group is not rewritten, since its placeholder is required and would no longer be inside the brackets.
+The rewrite is declined where an option before the group takes its opening parenthesis as its value, since the group is then no group, and where a flag of the group is a documented switch, which D40's rule would then give the placeholder, although the group shows no value for that flag alone.
+`docopter._without_value_prefixes` removes a bracketed group that opens a word and is written directly before the rest of it, as `_VALUE_PREFIX` matches, where that rest is a placeholder or a lowercase word, so the flag meets its value and the caller writes any prefix into it; ssh's `-D [bind_address:]port` is read the same way.
+A group written apart from the token after it, as in `--fix [(a|b):] <commit>`, is a group of the pattern and is left as written, and so is one inside which an option takes a token as its value, since its closing bracket would then close another.
+Only the text shows that a group is written directly before its value, and every later rewrite joins `parse_pattern`'s tokens with spaces, so this one runs first, on the text `formal_usage` returns.
+Each removes or moves a balanced run of tokens, so every other bracket stays matched, but each changes which token a flag takes, so neither is safe as a pre-pass on its own: as written, the last flag of a group takes the closing parenthesis, and a documented flag before a prefix takes its opening bracket, and an unbalanced text can parse only that way.
+`_read_command_line` therefore reads four texts in turn, with both rewrites, with the prefixes removed alone, with the values distributed alone, and as written, each with and without the values the synopsis shows, and keeps the first reading that parses, so a usage line that parsed before still parses; over the 12,204,240 token sequences of one to six tokens drawn from `[ ] ( ) | ... -c -C --sq <x> w ]<x> ]w [w]<x> [(w|w):]<x>`, read with `-c`, `-C` and `--sq` documented as switches, as taking values, with `-C` undocumented, and with none documented, no sequence stops parsing, and 276,864 start, each a text that failed because a flag took a bracket, as D18's retry recovers.
+Over the 242 help texts, two records change, and no outcome class, CLI prefix or warning moves: git-commit loses its positionals `commit`, `:` and a second `commit`, and ssh's `-D` takes `port`, which loses the positionals `bind_address` and `port`.
+Each changed document passes `miniwdl check` and `nextflow lint`, and both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
+git 2.56.0 accepts `-c X`, `-C X`, `--squash X`, `--fixup X` and `--fixup amend:X`, each as one value, and the probe of D41 found that ssh's `-D` takes a value.
 
 ### Working on the vendored parser
 

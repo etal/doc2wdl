@@ -69,6 +69,13 @@ _REPEATED_VALUE = re.compile(r"(?:^|\s|--[^\s=]+=)([^\s\[\]-]\S*) \[\1 \.\.\.\]"
 _OPTIONAL_PART = re.compile(r"\[[A-Za-z0-9-]+\](?=[\w-])")
 _PLAIN_FLAG = re.compile(r"--?(?:[\w@](?:[\w.@+-]*[\w@+-])?|[%,?])")
 
+# A bracketed group that opens a word and is written directly before the rest of
+# it, as git writes `--fixup [(amend|reword):]<commit>`: notation for an optional
+# prefix of a value, as `_OPTIONAL_PART` is notation inside a flag's name, rather
+# than a group of the pattern.  One level of parentheses may be nested in it, so
+# the text it matches is balanced.  `_without_value_prefixes` reads it.
+_VALUE_PREFIX = re.compile(r"(?<=\s)\[(?:[^\[\]()]|\([^()]*\))*\](?=\S)")
+
 # A short and a long spelling of one flag joined by a bar, as SRA Toolkit and npm
 # write `-A|--accession`, and a flag followed by an ellipsis, as clap writes a
 # counted flag, `--verbose...`.  `_documented_options` reads the first as
@@ -547,37 +554,33 @@ def _read_command_line(printable, usage, options):
     matches, is left out with a warning on standard error, since it names no
     argument.
 
-    Before the first reading, flags are respelled as `_carried_spellings` and
-    `_single_dash_spellings` describe, and the repetition `_without_value_repeats`
-    describes is removed; none of these can stop a usage line from parsing.  Each
-    reading then removes the groups `_without_attached_values` describes, and the
-    reading with values the words `_without_literal_alternatives` describes, after
-    the values are decided, so that ``--context[=N] FILE`` does not give ``FILE``
-    to ``--context``.  A usage line that does not parse is read once more as
-    `_read_pattern` describes.  With no tree to confirm them, the command words are
-    those of the text alone.
+    The text is read with the prefixes `_without_value_prefixes` describes
+    removed, and then as written.  Each text has its flags respelled as
+    `_carried_spellings` and `_single_dash_spellings` describe and the repetition
+    `_without_value_repeats` describes removed, none of which can stop it from
+    parsing, and is read as `_readings` describes, first with the values that
+    `_distributed_values` distributes, then without them.  The first reading that
+    parses is kept, so a usage line that parsed as written still parses.  A
+    reading that does not parse is read once more as `_read_pattern` describes.
+    With no tree to confirm them, the command words are those of the text alone.
     """
     words = _command_words(usage)
     documented = len(options)
-    formal, entries = _single_dash_spellings(
-        _carried_spellings(
-            docopt.formal_usage(_CONTINUATION.sub("", printable)), options
-        ),
-        options,
-    )
-    formal = _without_value_repeats(formal, entries)
-    valued = _synopsis_valued_options(formal, entries)
-    switches = _synopsis_valued_switches(formal, entries)
-    taking = list(entries)
-    for index in switches:
-        taking[index] = copy.copy(entries[index])
-        taking[index].argcount, taking[index].value = 1, None
-    readings = [(_without_attached_values(formal, entries), entries)]
-    if valued or switches:
-        taking = [*taking, *valued]
-        text = _without_attached_values(formal, taking)
-        readings.insert(0, (_without_literal_alternatives(text, taking), taking))
-    for number, (text, reading) in enumerate(readings):
+    formal = docopt.formal_usage(_CONTINUATION.sub("", printable))
+    # The prefix is read first, since every later rewrite joins the tokens with
+    # spaces and so loses the text that writes it directly before its value.
+    prefixed = _without_value_prefixes(formal, options)
+    readings = []
+    for text in dict.fromkeys([prefixed, formal]):
+        text, entries = _single_dash_spellings(
+            _carried_spellings(text, options), options
+        )
+        text = _without_value_repeats(text, entries)
+        distributed = _distributed_values(text, entries)
+        if distributed != text:
+            readings += _readings(distributed, entries)
+        readings += _readings(text, entries)
+    for text, reading, switches in readings:
         try:
             pattern = _read_pattern(text, reading)
         except docopt.DocoptLanguageError as error:
@@ -590,6 +593,8 @@ def _read_command_line(printable, usage, options):
             why,
             file=sys.stderr,
         )
+        # What the last reading, the text as written, registered before it failed.
+        options[documented:] = reading[documented:]
         return " ".join(words), []
     first = {}
     for index, leaf in enumerate(pattern.flat(docopt.Option)):
@@ -598,9 +603,8 @@ def _read_command_line(printable, usage, options):
         (opt for opt in reading[documented:] if (opt.short, opt.long) in first),
         key=lambda opt: first[opt.short, opt.long],
     )
-    if number == 0:
-        for index in switches:
-            options[index].argcount, options[index].value = 1, None
+    for index in switches:
+        options[index].argcount, options[index].value = 1, None
     # `formal_usage` wraps each line of the synopsis in parentheses and joins the
     # lines with `|`, so the tree's one child is either an Either of the lines or
     # the single line itself.  A synopsis that closes and reopens a parenthesis, as
@@ -636,6 +640,32 @@ def _read_command_line(printable, usage, options):
             continue
         positionals.append(slot)
     return prefix, positionals
+
+
+def _readings(formal, entries):
+    """The readings of `formal` to try in turn: with the values it shows, then without.
+
+    Each is the text to parse, the options to parse it with, and the indices of
+    the documented switches that take a value in that reading.  Each reading has a
+    list of its own, since `parse_pattern` appends to it the options it meets.  The
+    values are those `_synopsis_valued_options` and `_synopsis_valued_switches`
+    read from `formal` before the groups `_without_attached_values` describes are
+    removed from either reading, so that ``--context[=N] FILE`` does not give
+    ``FILE`` to ``--context``.
+    """
+    valued = _synopsis_valued_options(formal, entries)
+    switches = _synopsis_valued_switches(formal, entries)
+    readings = [(_without_attached_values(formal, entries), list(entries), [])]
+    if valued or switches:
+        taking = list(entries)
+        for index in switches:
+            taking[index] = copy.copy(entries[index])
+            taking[index].argcount, taking[index].value = 1, None
+        taking += valued
+        text = _without_attached_values(formal, taking)
+        text = _without_literal_alternatives(text, taking)
+        readings.insert(0, (text, taking, switches))
+    return readings
 
 
 def _lead_commands(alternative):
@@ -1001,6 +1031,120 @@ def _without_value_repeats(formal, options):
     if not removed:
         return formal
     return " ".join(token for i, token in enumerate(tokens) if i not in removed)
+
+
+def _without_value_prefixes(formal, options):
+    """Remove an optional prefix written inside a value: ``[(amend|reword):]<commit>``.
+
+    git writes ``--fixup [(amend|reword):]<commit>`` and ssh
+    ``-D [bind_address:]port``: the brackets mark a part of the value that may be
+    left out, written directly before the rest of it, and `parse_pattern` read them
+    as a group of its own, its words as positionals, so the flag met a bracket
+    rather than its value.  A group that `_VALUE_PREFIX` matches and that is
+    written directly before a placeholder or a lowercase word is removed, so the
+    flag meets the rest of the value, and the caller writes any prefix into it.
+
+    Only the text shows that the group is written directly before its value, which
+    is why this runs on `formal` as `formal_usage` writes it.  The group is removed
+    whole and balanced, so every other bracket stays matched, as
+    `_without_value_repeats` argues.  A documented flag taking a value takes the
+    group's opening bracket as written, which is the defect read here, but where an
+    option, as the text reads it, takes a token inside the group, the group is left
+    as written, since its closing bracket would then close another.  Where the text
+    parses only without the removal, as an unbalanced one can, `_read_command_line`
+    reads it so.  The text is returned unchanged where nothing is removed.
+    """
+    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    taken = {value for _option, value in _valued_options(tokens, options)}
+
+    def without(match):
+        opening = len(_PATTERN_SYMBOL.sub(r" \1 ", formal[: match.start()]).split())
+        after = opening + len(_PATTERN_SYMBOL.sub(r" \1 ", match.group()).split())
+        rest = tokens[after] if after < len(tokens) else ""
+        if _is_placeholder(rest) or _is_command_word(rest):
+            if taken.isdisjoint(range(opening + 1, after)):
+                return ""
+        return match.group()
+
+    return _VALUE_PREFIX.sub(without, formal)
+
+
+def _distributed_values(formal, options):
+    """Give each flag of a group of alternatives the placeholder written after it.
+
+    git writes ``(-c | -C | --squash) <commit>`` for three flags that each take the
+    commit.  Read as written, the documented ``-c`` and ``-C`` took the bars as
+    their values, the alternatives were lost, and ``<commit>`` was a positional.
+    The text is rewritten to ``(-c <commit> | -C <commit> | --squash <commit>)``,
+    where every alternative of a parenthesized group is one flag, written without
+    ``=``, and a placeholder directly follows the group.  Each flag then takes the
+    placeholder: a documented flag by its entry, an undocumented one as
+    `_synopsis_valued_options` describes.  A bracketed group is left as written,
+    since its placeholder is required, and would no longer be once it moved inside.
+
+    No bracket, parenthesis or bar is added or removed, so only a value can change
+    how the text parses.  The rewrite is declined where an option before the group
+    takes its opening parenthesis as its value, as the text reads it, since the
+    group is then no group, and where any of the flags is a documented switch,
+    which `_synopsis_valued_switches` would then give the placeholder, although
+    the group shows no value for it alone.  The last flag of the group may take
+    its closing parenthesis as written, which is the defect read here; where a
+    text read so parses only that way, as an unbalanced one can,
+    `_read_command_line` reads it without the rewrite.  The text is returned
+    unchanged where nothing is rewritten.
+    """
+    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    taken = {value for _option, value in _valued_options(tokens, options)}
+    switches = {
+        flag
+        for option in options
+        if option.argcount == 0
+        for flag in (option.short, option.long)
+        if flag
+    }
+    inserted, removed = {}, set()
+    for opening, token in enumerate(tokens):
+        flags = _flag_alternatives(tokens, opening) if token == "(" else None
+        if flags is None:
+            continue
+        value = flags[-1] + 2
+        if value >= len(tokens) or not _is_placeholder(tokens[value]):
+            continue
+        if opening in taken:
+            continue
+        if any(tokens[flag] in switches for flag in flags):
+            continue
+        inserted.update((flag + 1, tokens[value]) for flag in flags)
+        removed.add(value)
+    if not removed:
+        return formal
+    parts = []
+    for index, token in enumerate(tokens):
+        if index in inserted:
+            parts.append(inserted[index])
+        if index not in removed:
+            parts.append(token)
+    return " ".join(parts)
+
+
+def _flag_alternatives(tokens, opening):
+    """The indices of the flags of ``( -c | -C | --squash )`` at `opening`, or None.
+
+    None unless the group holds at least two alternatives, each one flag token
+    written without ``=``.
+    """
+    flags, index = [], opening + 1
+    while index + 1 < len(tokens):
+        token = tokens[index]
+        if not token.startswith("-") or token in ("-", "--") or "=" in token:
+            return None
+        flags.append(index)
+        if tokens[index + 1] == ")":
+            return flags if len(flags) > 1 else None
+        if tokens[index + 1] != "|":
+            return None
+        index += 2
+    return None
 
 
 def _without_attached_values(formal, options):

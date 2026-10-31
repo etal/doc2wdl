@@ -1154,6 +1154,46 @@ def test_a_choice_of_words_for_a_flags_value_is_no_positional(synopsis, flags, c
     assert task["cli_prefix"] == "tool"
 
 
+GIT_COMMIT = """usage: git commit {synopsis}
+
+    -c, --reedit-message <commit>
+                          reuse and edit message from specified commit
+    -C, --reuse-message <commit>
+                          reuse message from specified commit
+    --squash <commit>     use autosquash formatted message to squash commit
+    --fixup <commit>      use autosquash formatted message to fixup commit
+    -a, --all             commit all changed files
+    -s, --signoff         add a Signed-off-by trailer
+"""
+
+
+@pytest.mark.parametrize(
+    "synopsis, spellings",
+    [
+        # Each flag of the group takes the commit, and so does `--fixup`, whose
+        # optional prefix is written directly before its value.
+        ("[(-c | -C | --squash) <commit> | --fixup [(amend|reword):]<commit>]", []),
+        # ssh writes `-D [bind_address:]port`, which no entry documents.
+        ("[-D [bind_address:]port] [-a]", []),
+        # Written apart from the value, the group is one of the pattern, and the
+        # flag, which no entry documents, is a switch.
+        (
+            "[--fix [(amend|reword):] <commit>]",
+            [["amend", "reword"], [":"], ["<commit>"]],
+        ),
+        # Once the placeholder followed each documented switch, each would take it.
+        ("[(-a | -s) <commit>]", [["<commit>"]]),
+    ],
+)
+def test_a_value_written_after_alternatives_or_a_prefix_is_the_flags(
+    synopsis, spellings, capsys
+):
+    """git writes `(-c | -C | --squash) <commit>`, where `-c` took the bar as its value."""
+    parsed = docopter.parse(GIT_COMMIT.format(synopsis=synopsis))
+    assert capsys.readouterr().err == ""
+    assert [p.spellings for p in parsed.positionals] == spellings
+
+
 @pytest.mark.parametrize(
     "entry, spellings, takes_value",
     [
