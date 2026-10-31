@@ -6,6 +6,7 @@ tree and inspected statically.  Nothing here ever matches the text against
 """
 
 import collections
+import copy
 import itertools
 import re
 import sys
@@ -543,21 +544,23 @@ def _read_command_line(printable, usage, options):
     matches, is left out with a warning on standard error, since it names no
     argument.
 
-    A usage line that parses as written is not rewritten, except that the
-    repetition `_without_value_repeats` describes is removed beforehand; one that
-    does not is read once more as `_read_pattern` describes.  With no tree to
-    confirm them, the command words are those of the text alone.
+    Before the first reading, flags are respelled as `_carried_spellings` and
+    `_single_dash_spellings` describe, and the repetition `_without_value_repeats`
+    describes is removed; none of these can stop a usage line from parsing.  One
+    that does not parse is read once more as `_read_pattern` describes.  With no
+    tree to confirm them, the command words are those of the text alone.
     """
     words = _command_words(usage)
     documented = len(options)
-    formal = _without_value_repeats(
+    formal, entries = _single_dash_spellings(
         _carried_spellings(
             docopt.formal_usage(_CONTINUATION.sub("", printable)), options
         ),
         options,
     )
-    valued = _synopsis_valued_options(formal, options)
-    readings = [[*options, *valued], options] if valued else [options]
+    formal = _without_value_repeats(formal, entries)
+    valued = _synopsis_valued_options(formal, entries)
+    readings = [[*entries, *valued], entries] if valued else [entries]
     for reading in readings:
         try:
             pattern = _read_pattern(formal, reading)
@@ -575,7 +578,7 @@ def _read_command_line(printable, usage, options):
     first = {}
     for index, leaf in enumerate(pattern.flat(docopt.Option)):
         first.setdefault((leaf.short, leaf.long), index)
-    options[:] = reading[:documented] + sorted(
+    options[:] = options[:documented] + sorted(
         (opt for opt in reading[documented:] if (opt.short, opt.long) in first),
         key=lambda opt: first[opt.short, opt.long],
     )
@@ -708,19 +711,10 @@ def _carried_spellings(formal, options):
     if not carried:
         return formal
     tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
-    safe = dict.fromkeys(carried, True)
-    for token, after in zip(tokens, [*tokens[1:], ""]):
-        long, eq, _value = token.partition("=")
-        if long in safe:
-            if carried[long].argcount == 0:
-                fits = not eq
-            else:
-                fits = (
-                    bool(eq)
-                    or _is_placeholder(after)
-                    or bool(_CHOICE_GROUP.fullmatch(after))
-                )
-            safe[long] = safe[long] and fits
+    safe = {
+        spelling: _rewritable(tokens, spelling, option.argcount)
+        for spelling, option in carried.items()
+    }
     rewritten = False
     for index, token in enumerate(tokens):
         long, eq, value = token.partition("=")
@@ -728,6 +722,80 @@ def _carried_spellings(formal, options):
             tokens[index] = carried[long].long + eq + value
             rewritten = True
     return " ".join(tokens) if rewritten else formal
+
+
+def _rewritable(tokens, spelling, argcount):
+    """May every token spelling this flag be rewritten to a long flag of `argcount`?
+
+    False where the rewrite could stop the synopsis from parsing.  Where the
+    option takes no value, no token spelling it may attach one with ``=``, which
+    `parse_long` rejects; where it takes one, every such token must attach its
+    value or be directly followed by a placeholder or a choice group, which
+    `parse_long` would otherwise take as the value.
+    """
+    for token, after in zip(tokens, [*tokens[1:], ""]):
+        long, eq, _value = token.partition("=")
+        if long != spelling:
+            continue
+        if argcount == 0:
+            if eq:
+                return False
+        elif not (eq or _is_placeholder(after) or _CHOICE_GROUP.fullmatch(after)):
+            return False
+    return True
+
+
+def _single_dash_spellings(formal, options):
+    """Spell a documented single-dash flag of several letters so `parse_long` reads it.
+
+    `parse_shorts` reads every token of one dash as a stack of one-letter flags, so
+    bedtools getfasta's ``-fi <fasta> -bed <bed/gff/vcf>``, whose options block
+    documents ``-fi`` and ``-bed``, declared the switches ``-f``, ``-i``, ``-b``,
+    ``-e`` and ``-d``, which bedtools rejects as unrecognized parameters.  Each
+    token an entry documents as its whole flag is rewritten to a long spelling of
+    the same name, which `parse_long` matches to that entry's option, so the token
+    names the documented option and the letters name nothing.
+
+    An entry is the only evidence that separates such a flag from a stack: BSD's
+    ``[-Ccsu]`` is a stack, and cargo's ``-Zscript`` is ``-Z`` with its value
+    attached, so a token no entry documents is left as written.  A spelling two
+    entries document is left as written too, since the token could name only the
+    last of them; so is one whose rewrite could stop the synopsis from parsing, as
+    `_rewritable` decides.
+
+    Return the rewritten text and the options to read it with: each rewritten
+    option is a copy carrying the long spelling, so `options` keeps the flag the
+    entry writes and `transform` passes it.  The long spelling is the flag's own
+    name under a second dash, lengthened with ``_`` until it is a spelling neither
+    the options block nor the synopsis writes.
+    """
+    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    written = {token.partition("=")[0] for token in tokens}
+    taken = written | {
+        flag for opt in options for flag in (opt.short, opt.long) if flag
+    }
+    declared = collections.Counter(opt.short for opt in options if opt.short)
+    entries, spellings = list(options), {}
+    for index, option in enumerate(options):
+        short = option.short
+        if short is None or len(short) < 3 or declared[short] > 1:
+            continue
+        if short not in written or not _rewritable(tokens, short, option.argcount):
+            continue
+        long = "-" + short
+        while long in taken:
+            long += "_"
+        taken.add(long)
+        spellings[short] = long
+        entries[index] = copy.copy(option)
+        entries[index].long = long
+    if not spellings:
+        return formal, options
+    for index, token in enumerate(tokens):
+        short, eq, value = token.partition("=")
+        if short in spellings:
+            tokens[index] = spellings[short] + eq + value
+    return " ".join(tokens), entries
 
 
 def _synopsis_valued_options(formal, options):

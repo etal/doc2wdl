@@ -1140,6 +1140,61 @@ def test_a_synopsis_that_does_not_parse_keeps_the_options_read_without_values(ca
     assert "unmatched '('" in capsys.readouterr().err
 
 
+GETFASTA = """Usage:   bedtools getfasta [OPTIONS] {synopsis}
+
+Options:
+\t-fi\t\tInput FASTA file
+\t-bed\t\tBED/GFF/VCF file of ranges to extract from -fi
+\t-s\t\tForce strandedness.
+"""
+
+
+def test_a_documented_flag_of_several_letters_after_one_dash_is_no_stack(capsys):
+    """bedtools documents `-fi` and `-bed`, which docopt read as stacks of letters.
+
+    bedtools rejects each letter, `-f` among them, as an unrecognized parameter.
+    """
+    doc = GETFASTA.format(synopsis="-fi <fasta> -bed <bed/gff/vcf>")
+    parsed = docopter.parse(doc)
+    assert capsys.readouterr().err == ""
+    assert [(opt.short, opt.long) for opt in parsed.options] == [
+        ("-fi", None),
+        ("-bed", None),
+        ("-s", None),
+    ]
+    assert [p.spellings for p in parsed.positionals] == [
+        ["OPTIONS"],
+        ["<fasta>"],
+        ["<bed/gff/vcf>"],
+    ]
+
+
+@pytest.mark.parametrize(
+    "synopsis, entry, spellings",
+    [
+        # The documented flag takes its value, so no positional is left.
+        ("-fi <fasta>", "-fi FILE  Input.", []),
+        # Read as one flag taking a value, `-fi` would take the closing bracket.
+        ("[-fi] <fasta>", "-fi FILE  Input.", [["<fasta>"]]),
+        # No entry documents the token, which a stack of letters may be.
+        ("[-fi] <fasta>", "-f  Force.\n  -i  Ignore case.", [["<fasta>"]]),
+        # The long spelling the rewrite chooses is one that no synopsis token
+        # writes, even with a value attached, and that no entry declares.
+        ("[-fi] [--fi=X] <x>", "-fi  Short.", [["<x>"]]),
+        ("[-fi] <x>", "-fi  Short.\n  --fi  Long.", [["<x>"]]),
+        # Only one of two entries spelling `-fi` could be read for the token.
+        ("-fi <fasta>", "-fi FILE  Input.\n  -fi FILE  Again.", [["<fasta>"]]),
+    ],
+)
+def test_a_single_dash_flag_is_one_flag_only_where_that_reads_safely(
+    synopsis, entry, spellings, capsys
+):
+    """The rewrite never stops a synopsis from parsing, and needs an entry."""
+    parsed = docopter.parse(f"Usage: tool {synopsis}\n\nOptions:\n  {entry}\n")
+    assert capsys.readouterr().err == ""
+    assert [p.spellings for p in parsed.positionals] == spellings
+
+
 def test_tabs_advance_to_stops_eight_columns_apart():
     """R continues `--vanilla` on a line of three tabs, at its description column.
 
