@@ -795,6 +795,29 @@ def test_the_two_values_of_a_switch_are_one_input(synopsis, entry, expected):
     assert switch.default_value is (None if expected[1] else False)
 
 
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    [
+        ("-m, --seq-method, --method M", ("seq_method", "--method")),
+        ("-o, --out, --output-file F", ("out", "--output-file")),
+        # The first spelling names the input once its notation is read.
+        ("--[no-]verbose, --loud", ("verbose", "--loud")),
+        # A flag for false names nothing, wherever the entry writes it.
+        ("--zst, --no-zst", ("zst", "--zst")),
+        ("-f, --fast / -s, --safe", ("fast", "--fast")),
+    ],
+)
+def test_an_alias_input_is_named_after_the_first_long_flag(entry, expected):
+    """An input is named after its first long flag, from which argparse derives `dest`.
+
+    The flag passed is still the last, as the argparse reader passes it.
+    """
+    doc = f"usage: tool [options] FILE\n\noptions:\n  {entry}  Use it.\n"
+    task = docopter.transform(*docopter.parse(doc))
+    [arg] = [arg for arg in task["cli_args"] if arg.option_flag]
+    assert (arg.name, arg.option_flag) == expected
+
+
 def test_a_flag_written_bare_and_with_an_attached_value_is_a_switch(capsys):
     """GNU sort's `--check=diagnose-first` is attached only; `--check` is the switch.
 

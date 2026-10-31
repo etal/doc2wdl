@@ -202,6 +202,10 @@ def parse(doc):
     #               # likewise: the long flags the entry writes beside the one the
     #               # option carries, which the synopsis may name instead, as
     #               # `_entry_spellings` reads them
+    #   first_long  # likewise: the first long flag the entry writes for the
+    #               # option, other than a flag for false, or "" if it writes
+    #               # none; argparse derives `dest` from this flag, and the input
+    #               # is named after it
     #   false_flag  # likewise: the flag a switch passes for false, as in
     #               # `--color / --no-color`, or ""
     #   value_optional
@@ -222,6 +226,7 @@ def parse(doc):
         option.declared_type = None
         option.attached = False
         option.other_spellings = ()
+        option.first_long = ""
         option.false_flag = ""
         option.value_optional = False
     for option in options:
@@ -361,7 +366,10 @@ def transform(usage, cli_prefix, positionals, options):
             name = OUTPUT_FILE_NAME
             has_output_file = True
         else:
-            name = _identifier(option_flag)
+            # argparse derives `dest` from the first long flag, and the argparse
+            # reader names an input after `dest`, so the first long flag names it
+            # here too; the flag passed is still the one the option carries.
+            name = _identifier(_passable_flag(opt.first_long) or option_flag)
         # A switch with a flag for false has a third state, passing neither, and help
         # text states no default for it.
         false_flag = "" if takes_value else _passable_flag(opt.false_flag) or ""
@@ -1397,16 +1405,18 @@ def _documented_options(doc, synopsis):
     ``attached`` whether the entry writes its flag with a value attached by ``=``.
     An entry writing more than one long flag is read as `_entry_spellings`
     describes, and the option records the flags it does not carry as
-    ``other_spellings``, a flag for false as ``false_flag``, and as
-    ``value_optional`` whether one flag is written both bare and attached.
+    ``other_spellings``, the first long flag it writes other than a flag for false
+    as ``first_long``, a flag for false as ``false_flag``, and as ``value_optional``
+    whether one flag is written both bare and attached.
     """
     options = []
     for entry, description in _option_entries(doc, synopsis):
         flags, gap, text = entry[0].partition("  ")
         flags = _FLAG_REPETITION.sub(r"\1", _FLAG_ALTERNATIVE.sub(r"\1, ", flags))
-        flags, others, false_flag, value_optional = _entry_spellings(flags)
+        flags, others, first_long, false_flag, value_optional = _entry_spellings(flags)
         option = docopt.Option.parse("\n".join([flags + gap + text, *entry[1:]]))
         option.other_spellings = others
+        option.first_long = first_long
         option.false_flag = false_flag
         option.value_optional = value_optional
         option.description = _joined(description)
@@ -1426,15 +1436,17 @@ def _entry_spellings(flags):
     """Read an entry's flags as one option.
 
     Returns the flag text to give `Option.parse`, the long flags the option does
-    not carry, its flag for false or ``""``, and whether one flag is written both
-    bare and with a value attached.
+    not carry, the first long flag it writes other than a flag for false or ``""``,
+    its flag for false or ``""``, and whether one flag is written both bare and with
+    a value attached.
 
     `Option.parse` keeps the last long flag an entry writes and gives the option a
     value where any of its flags is written with one, so three shapes are misread.
     Python 3.13's argparse writes an option with two long spellings as
     ``--log-dir, --log_dir LOG_DIR``, and GNU writes ``-u, --utc, --universal``:
     either spelling is the tool's own, the last is the one `Option.parse` keeps
-    and the argparse reader passes, and the others are returned for
+    and the argparse reader passes, the first is the one argparse derives `dest`
+    from and so names the input, and the others are returned for
     `_carried_spellings`.  argparse's ``BooleanOptionalAction`` writes the two
     values of a switch as ``--x, --no-x``, and click writes them as
     ``--x / --no-x`` or as ``--fast / --safe``: the flags after click's slash, and
@@ -1456,7 +1468,7 @@ def _entry_spellings(flags):
     declarations = _declarations(sides[0])
     negations = _declarations(sides[1]) if len(sides) > 1 else []
     if declarations is None or negations is None:
-        return flags, (), "", False
+        return flags, (), "", "", False
     # A declaration that is its flag alone, with no placeholder and no `=`, is bare.
     bare = {d for d in declarations if _flag_name(d) == d}
     attached = {_flag_name(d) for d in declarations if "=" in d.split()[0]}
@@ -1471,7 +1483,9 @@ def _entry_spellings(flags):
         flag for flag in _long_flags(declarations + negations) if flag not in carried
     )
     text = ", ".join(kept) if negations else flags
-    return text, others, false_flags[-1] if false_flags else "", bool(bare & attached)
+    first = longs[0] if longs else ""
+    false_flag = false_flags[-1] if false_flags else ""
+    return text, others, first, false_flag, bool(bare & attached)
 
 
 def _declarations(flags):

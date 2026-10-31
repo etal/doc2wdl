@@ -122,30 +122,35 @@ def test_the_two_readers_infer_the_same_types():
     }
 
 
-def test_the_two_readers_pass_the_same_flags_for_spellings_of_one_option():
+def test_the_two_readers_agree_on_spellings_of_one_option():
     """An option with two long spellings, and a switch with a flag for false.
 
     argparse lists both spellings in one entry, and the synopsis names the first;
-    each reader passes the last.  Compared by flag rather than by name, since the
-    argparse reader names an input from its `dest`, the first spelling, and the
-    help-text reader from the flag it passes.
+    each reader passes the last and names the input after the first, from which
+    argparse derives `dest`.
     """
     parser = argparse.ArgumentParser(prog="tool")
-    parser.add_argument("--log-dir", "--log_dir", help="Logs.")
+    parser.add_argument("--seq-method", "--method", help="Method.")
     parser.add_argument("--zst", action=argparse.BooleanOptionalAction, help="Zst.")
     parser.add_argument("infile", help="Input.")
 
-    def flags(task):
+    def shapes(task):
         return [
-            (arg.option_flag, arg.false_flag, arg.option_has_value, arg.default_value)
+            (
+                arg.name,
+                arg.option_flag,
+                arg.false_flag,
+                arg.option_has_value,
+                arg.default_value,
+            )
             for arg in task["cli_args"]
             if arg.option_flag
         ]
 
     (from_parser,) = argparser.unpack_tasks(parser, "tool")
     from_text = docopter.transform(*docopter.parse(parser.format_help()))
-    assert flags(from_text) == flags(from_parser)
-    assert flags(from_parser) == [
-        ("--log_dir", "", True, None),
-        ("--zst", "--no-zst", False, None),
+    assert shapes(from_text) == shapes(from_parser)
+    assert shapes(from_parser) == [
+        ("seq_method", "--method", "", True, None),
+        ("zst", "--zst", "--no-zst", False, None),
     ]
