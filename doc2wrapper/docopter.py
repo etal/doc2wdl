@@ -232,18 +232,31 @@ def parse(doc):
     # `_read_command_line` appends the options named only in the synopsis, which
     # have no options-block entry and so no description.
     for option in options[documented:]:
-        option.description = ""
-        option.repeated = None
-        option.declared_type = None
-        option.attached = False
-        option.other_spellings = ()
-        option.first_long = ""
-        option.false_flag = ""
-        option.value_optional = False
+        _undocumented(option)
     for option in options:
         option.repeats_flag = _passable_flag(option.name) in repeating
     _positional_descriptions(doc, synopsis, positionals)
     return ParsedHelp(usage, cli_prefix, positionals, options)
+
+
+def _undocumented(option):
+    """Annotate an option that no options-block entry documents, and return it.
+
+    `_documented_options` reads every annotation `parse` lists from an entry, so
+    an option that `parse_pattern` appends, or that `_single_dash_spellings` makes
+    for a flag the synopsis alone shows, carries none.  The one made there is
+    annotated when it is made, since `_without_value_repeats` reads ``repeated``
+    from the options it reads a synopsis with.
+    """
+    option.description = ""
+    option.repeated = None
+    option.declared_type = None
+    option.attached = False
+    option.other_spellings = ()
+    option.first_long = ""
+    option.false_flag = ""
+    option.value_optional = False
+    return option
 
 
 def _synopsis(doc, printable):
@@ -660,6 +673,7 @@ def _read_command_line(printable, usage, options):
         )
         # What the last reading, the text as written, registered before it failed.
         options[documented:] = reading[documented:]
+        _spelled_single_dash(options[documented:])
         return " ".join(words), [], set()
     first = {}
     for index, leaf in enumerate(pattern.flat(docopt.Option)):
@@ -677,6 +691,9 @@ def _read_command_line(printable, usage, options):
         kept.setdefault(
             (opt.short, opt.long), options[index] if index < documented else opt
         )
+    # `kept` is keyed on the spellings the tree holds, so a long spelling made for a
+    # single-dash flag is removed once it is built and before any flag is read.
+    _spelled_single_dash(options[documented:])
     repeating = {
         _passable_flag(kept[key].name)
         for key in _repeated_options(pattern)
@@ -945,18 +962,20 @@ def _single_dash_spellings(formal, options):
     the same name, which `parse_long` matches to that entry's option, so the token
     names the documented option and the letters name nothing.
 
-    An entry is the only evidence that separates such a flag from a stack: BSD's
-    ``[-Ccsu]`` is a stack, and cargo's ``-Zscript`` is ``-Z`` with its value
-    attached, so a token no entry documents is left as written.  A spelling two
-    entries document is left as written too, since the token could name only the
-    last of them; so is one whose rewrite could stop the synopsis from parsing, as
-    `_rewritable` decides.
+    A token no entry documents is one flag only where the synopsis shows it taking
+    a value, as `_undocumented_single_dash` describes, since BSD's ``[-Ccsu]`` is
+    a stack, and cargo's ``-Zscript`` is ``-Z`` with its value attached.  A
+    spelling two entries document is left as written, since the token could name
+    only the last of them; so is one whose rewrite could stop the synopsis from
+    parsing, as `_rewritable` decides.
 
     Return the rewritten text and the options to read it with: each rewritten
     option is a copy carrying the long spelling, so `options` keeps the flag the
-    entry writes and `transform` passes it.  The long spelling is the flag's own
-    name under a second dash, lengthened with ``_`` until it is a spelling neither
-    the options block nor the synopsis writes.
+    entry writes and `transform` passes it, and each undocumented flag is a new
+    option carrying both spellings, from which `_spelled_single_dash` removes the
+    long one once the synopsis is read.  The long spelling is the flag's own name
+    under a second dash, lengthened with ``_`` until it is a spelling neither the
+    options block nor the synopsis writes.
     """
     tokens = _tokens(formal)
     written = {token.partition("=")[0] for token in tokens}
@@ -965,19 +984,27 @@ def _single_dash_spellings(formal, options):
     }
     declared = collections.Counter(opt.short for opt in options if opt.short)
     entries, spellings = list(options), {}
+
+    def respelled(short):
+        long = "-" + short
+        while long in taken:
+            long += "_"
+        taken.add(long)
+        spellings[short] = long
+        return long
+
     for index, option in enumerate(options):
         short = option.short
         if short is None or len(short) < 3 or declared[short] > 1:
             continue
         if short not in written or not _rewritable(tokens, short, option.argcount):
             continue
-        long = "-" + short
-        while long in taken:
-            long += "_"
-        taken.add(long)
-        spellings[short] = long
         entries[index] = copy.copy(option)
-        entries[index].long = long
+        entries[index].long = respelled(short)
+    for short in _undocumented_single_dash(tokens, options):
+        stand_in = _undocumented(docopt.Option(short, respelled(short), 1))
+        stand_in.spelled = short
+        entries.append(stand_in)
     if not spellings:
         return formal, options
     for index, token in enumerate(tokens):
@@ -985,6 +1012,65 @@ def _single_dash_spellings(formal, options):
         if short in spellings:
             tokens[index] = spellings[short] + eq + value
     return " ".join(tokens), entries
+
+
+def _undocumented_single_dash(tokens, options):
+    """The single-dash tokens of several letters the synopsis alone shows as one flag.
+
+    bedtools bamtofastq writes ``-fq <FQ>`` and annotate ``-files FILE1`` with no
+    entry for either flag, so `parse_shorts` read each as a stack, declaring the
+    switches ``-f`` and ``-q``, which bedtools rejects as unrecognized parameters,
+    and the placeholder became a positional.  Such a token names one flag taking a
+    value where every token spelling it is directly followed by a placeholder, a
+    token `parse_atom` reads as an argument, and three further conditions hold.
+
+    No letter of the token is a documented flag taking a value, since
+    `parse_shorts` then reads the token as that flag with its value attached, as
+    cargo documents ``-Z <FLAG>`` and writes ``-Zscript <MANIFEST_RS>``.  Not
+    every letter is documented, since the options block then names a flag for
+    each letter and so explains the token as a stack, as it explains htsfile's
+    ``[-chHv]``.  And `_passable_flag` accepts the token, since `transform` leaves
+    out an option whose flag it rejects, and the value would go with it.
+
+    A lowercase word after the token is no placeholder here, as it is after a flag
+    of one letter in `_flags_before_placeholders`: BSD tr writes ``-ds string1``
+    and zip ``-xi list``, which are stacks.  A token attaching a value with ``=`` is
+    not considered.  The condition is stronger than `_rewritable` asks of a flag of
+    argument count 1, so the rewrite cannot stop the synopsis from parsing: the
+    value taken is a token that would otherwise be a positional.
+    """
+    documented = {flag for opt in options for flag in (opt.short, opt.long) if flag}
+    valued = {opt.short for opt in options if opt.short and opt.argcount}
+    followed = {}
+    for token, after in zip(tokens, [*tokens[1:], ""]):
+        if token.startswith("--") or not token.startswith("-") or len(token) < 3:
+            continue
+        if "=" not in token:
+            followed[token] = followed.get(token, True) and _is_placeholder(after)
+    return [
+        token
+        for token, always in followed.items()
+        if always
+        and token not in documented
+        and not any("-" + letter in valued for letter in token[1:])
+        and not all("-" + letter in documented for letter in token[1:])
+        and _passable_flag(token) is not None
+    ]
+
+
+def _spelled_single_dash(options):
+    """Give back the single-dash spelling of each flag `_single_dash_spellings` made.
+
+    Such a flag is read through a long spelling, which `parse_long` matches where
+    `parse_shorts` would read a stack, and is passed as the single-dash flag the
+    synopsis writes.  The long spelling is removed once the tree is read, from the
+    options of a reading that failed as well as one that parsed, since those of a
+    failed reading are what a degraded record declares.
+    """
+    for option in options:
+        spelled = getattr(option, "spelled", None)
+        if spelled:
+            option.short, option.long = spelled, None
 
 
 def _synopsis_valued_options(formal, options):

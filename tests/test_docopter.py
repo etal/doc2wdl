@@ -1478,6 +1478,55 @@ def test_a_single_dash_flag_is_one_flag_only_where_that_reads_safely(
 
 
 @pytest.mark.parametrize(
+    "synopsis, entry, flags, spellings",
+    [
+        # bedtools bamtofastq documents `-fq2` but not `-fq`, which takes its file.
+        ("-fq <FQ>", "-fq2  Second end.", [("-fq2", False), ("-fq", True)], []),
+        # cargo documents `-Z <FLAG>`, so `-Zscript` is `-Z` taking `script`.
+        ("-Zscript <M>", "-Z <FLAG>  Unstable.", [("-Z", True)], [["<M>"]]),
+        # The options block names a flag for each letter, so the token is a stack.
+        (
+            "-ab <X>",
+            "-a  All.\n  -b  Brief.",
+            [("-a", False), ("-b", False)],
+            [["<X>"]],
+        ),
+        # A lowercase word may be an operand after a stack, as in BSD tr.
+        (
+            "-ds string1",
+            "-q  Quiet.",
+            [("-q", False), ("-d", False), ("-s", False)],
+            [["string1"]],
+        ),
+        # Every token spelling the flag must be followed by a placeholder.
+        ("-fq <FQ> [-fq]", "-q  Quiet.", [("-q", False), ("-f", False)], [["<FQ>"]]),
+    ],
+)
+def test_an_undocumented_single_dash_flag_is_one_flag_where_it_takes_a_value(
+    synopsis, entry, flags, spellings, capsys
+):
+    """bedtools writes `-fq <FQ>` and documents no `-fq`; BSD writes stacks so."""
+    parsed = docopter.parse(f"Usage: tool {synopsis}\n\nOptions:\n  {entry}\n")
+    assert capsys.readouterr().err == ""
+    assert [p.spellings for p in parsed.positionals] == spellings
+    task = docopter.transform(*parsed)
+    assert [
+        (arg.option_flag, arg.option_has_value)
+        for arg in task["cli_args"]
+        if arg.option_flag
+    ] == flags
+
+
+def test_a_synopsis_that_does_not_parse_keeps_an_undocumented_single_dash_flag(capsys):
+    """The long spelling the flag is read through is never the one passed."""
+    parsed = docopter.parse("Usage: tool -fq <FQ> (\n")
+    assert "unmatched '('" in capsys.readouterr().err
+    assert [(opt.short, opt.long, opt.argcount) for opt in parsed.options] == [
+        ("-fq", None, 1)
+    ]
+
+
+@pytest.mark.parametrize(
     "synopsis, takes_value, spellings",
     [
         # bedtools genomecov documents `-g` with no placeholder.
