@@ -717,21 +717,28 @@ def _readings(formal, entries):
     values are those `_synopsis_valued_options` and `_synopsis_valued_switches`
     read from `formal` before the groups `_without_attached_values` describes are
     removed from either reading, so that ``--context[=N] FILE`` does not give
-    ``FILE`` to ``--context``.
+    ``FILE`` to ``--context``, and so are the words
+    `_without_literal_alternatives` describes, after each reading's values.
     """
     valued = _synopsis_valued_options(formal, entries)
     switches = _synopsis_valued_switches(formal, entries)
-    readings = [(_without_attached_values(formal, entries), list(entries), [])]
+    readings = [(list(entries), [])]
     if valued or switches:
         taking = list(entries)
         for index in switches:
             taking[index] = copy.copy(entries[index])
             taking[index].argcount, taking[index].value = 1, None
-        taking += valued
-        text = _without_attached_values(formal, taking)
-        text = _without_literal_alternatives(text, taking)
-        readings.insert(0, (text, taking, switches))
-    return readings
+        readings.insert(0, ([*taking, *valued], switches))
+    return [
+        (
+            _without_literal_alternatives(
+                _without_attached_values(formal, reading), reading
+            ),
+            reading,
+            chosen,
+        )
+        for reading, chosen in readings
+    ]
 
 
 def _lead_commands(alternative):
@@ -1265,9 +1272,8 @@ def _without_literal_alternatives(formal, options):
     removed, where every alternative is one word.  A group whose alternatives
     hold anything else, as ``[-O fmt | -o fmt]`` does, stays as written.
 
-    Only bars and words are removed, never a bracket, and `_read_command_line`
-    reads the text as written where the result does not parse.  The text is
-    returned unchanged where nothing is removed.
+    Only bars and words are removed, never a bracket, which never changes whether
+    the text parses.  The text is returned unchanged where nothing is removed.
     """
     tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
     removed = set()

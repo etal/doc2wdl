@@ -1200,6 +1200,24 @@ def test_a_choice_of_words_for_a_flags_value_is_no_positional(synopsis, flags, c
     assert task["cli_prefix"] == "tool"
 
 
+@pytest.mark.parametrize(
+    "synopsis, entry, spellings",
+    [
+        # A documented flag taking a value reads its choice the same way.
+        ("[-V t | nil | never] <x>", "  -V STYLE  Style.\n", [["<x>"]]),
+        # An alternative that is a flag makes the group no choice of words.
+        ("[-V t | nil | -q] <x>", "", [["nil"], ["<x>"]]),
+    ],
+)
+def test_a_choice_of_words_is_read_only_where_every_alternative_is_a_word(
+    synopsis, entry, spellings, capsys
+):
+    """The words after the first are removed only from a group of words alone."""
+    parsed = docopter.parse(f"usage: tool {synopsis}\n\n{entry}")
+    assert capsys.readouterr().err == ""
+    assert [p.spellings for p in parsed.positionals] == spellings
+
+
 GIT_COMMIT = """usage: git commit {synopsis}
 
     -c, --reedit-message <commit>
