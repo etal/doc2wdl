@@ -526,10 +526,14 @@ def test_an_optional_prefix_names_the_flag_not_its_negation():
 
 
 @pytest.mark.parametrize(
-    "entry", ["--color[=WHEN]", "-W[level]", "-[mM][-]module", "--a[b[c]]-d"]
+    "entry", ["-[mM][-]module", "--a[b[c]]-d", "-d[t][:MOD]", "--jit-[option]"]
 )
 def test_brackets_that_are_no_optional_part_of_a_name_skip_the_option(entry, capsys):
-    """An optional attached value, or a set of letters, names no flag to pass."""
+    """A set of letters, two groups, or a group ending a name names no flag to pass.
+
+    ruby's `--jit-[option]` brackets no value, since it holds no `=`, and `--jit-`
+    is no flag.
+    """
     doc = f"Usage: tool [options]\n\nOptions:\n  {entry}  Something.\n  -q  Quiet.\n"
     task = docopter.transform(*docopter.parse(doc))
     assert [arg.option_flag for arg in task["cli_args"]] == ["-q"]
@@ -582,9 +586,9 @@ def test_a_bar_joins_two_spellings_of_one_flag():
     ]
 
 
-@pytest.mark.parametrize("entry", ["--color[=WHEN]|--colour", "-a|-b|-c", "-ab|--long"])
+@pytest.mark.parametrize("entry", ["-a|-b|-c", "-ab|--long"])
 def test_a_bar_that_joins_no_short_and_long_flag_is_not_read(entry, capsys):
-    """Read as spellings, the first two would pass `--colour WHEN` or `-c` alone.
+    """Read as spellings, `-a|-b|-c` would pass `-c` alone.
 
     Only a bar between a one-letter short flag and a long flag is read as a spelling.
     """
@@ -848,6 +852,41 @@ def test_a_flag_written_with_its_value_spaced_and_attached_takes_a_value():
     """`--file FILE, --file=FILE` writes no bare form, so its value is not optional."""
     doc = "Usage: make [options]\n\n  --file FILE, --file=FILE  Read FILE.\n"
     assert inputs(doc) == [("--file", "", True, "Read FILE.")]
+
+
+@pytest.mark.parametrize(
+    "entry, flag",
+    [
+        ("--color[=WHEN]", "--color"),
+        ("-u, --[no-]untracked-files[=<mode>]", "--untracked-files"),
+        ("-I[FMT], --iso-8601[=FMT]", "--iso-8601"),
+        ("-W[level]", "-W"),
+        # `Option.parse` splits the flags at `=`, so the bar is part of the value.
+        ("--color[=WHEN]|--colour", "--color"),
+    ],
+)
+def test_an_optional_attached_value_in_an_entry_is_the_switch(entry, flag, capsys):
+    """GNU ls documents `--color[=WHEN]`, as GNU sort `--check, --check=WORD`."""
+    doc = f"Usage: ls [OPTION]... [FILE]...\n\n  {entry}  Something.\n"
+    assert inputs(doc) == [(flag, "", False, "Something.")]
+    assert capsys.readouterr().err == ""
+
+
+def test_an_optional_part_of_a_required_value_keeps_the_value():
+    """ruby brackets part of the value its long flag shows required."""
+    doc = "Usage: ruby [switches]\n\n  -Eex[:in], --encoding=ex[:in]  Encoding.\n"
+    assert inputs(doc) == [("--encoding", "", True, "Encoding.")]
+
+
+@pytest.mark.parametrize("synopsis", ["[--color] FILE", "[--color=WHEN] FILE"])
+def test_a_synopsis_naming_an_entrys_optional_value_flag_still_parses(synopsis):
+    """The entry's flag stays `--color[` to the synopsis, which names `--color`.
+
+    The synopsis registers a flag of its own, which the described entry outranks.
+    """
+    doc = f"Usage: ls {synopsis}\n\n  --color[=WHEN]  Colorize.\n"
+    assert [p.spellings for p in docopter.parse(doc).positionals] == [["FILE"]]
+    assert inputs(doc) == [("--color", "", False, "Colorize.")]
 
 
 @pytest.mark.parametrize(

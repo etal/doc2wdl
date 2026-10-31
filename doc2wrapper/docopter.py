@@ -76,6 +76,10 @@ _REPEATED_LIST = re.compile(r"(?:^|\s)--?[^\s,=]+[ =]\[([^\s\[\]-]\S*) \.\.\.\]"
 _OPTIONAL_PART = re.compile(r"\[[A-Za-z0-9-]+\](?=[\w-])")
 _PLAIN_FLAG = re.compile(r"--?(?:[\w@](?:[\w.@+-]*[\w@+-])?|[%,?])")
 
+# A value a short flag writes optional and attached, as GNU date documents
+# `-I[FMT]` and git `-S[<keyid>]`.  `_without_optional_value` reads it.
+_ATTACHED_VALUE = re.compile(r"\[[^\[\]]*\]$")
+
 # A bracketed group that opens a word and is written directly before the rest of
 # it, as git writes `--fixup [(amend|reword):]<commit>`: notation for an optional
 # prefix of a value, as `_OPTIONAL_PART` is notation inside a flag's name, rather
@@ -510,6 +514,23 @@ def _command_words(usage):
     return tokens[:1] + list(itertools.takewhile(_is_command_word, tokens[1:]))
 
 
+def _without_optional_value(flag):
+    """`flag` without a value it writes optional and attached, or `flag` itself.
+
+    An entry writes such a value in brackets at the end of the flag, as GNU ls
+    documents ``--color[=WHEN]`` and GNU date ``-I[FMT]``.  `Option.parse` splits
+    an entry's flags at ``=``, so what it stores of the long form is the name with
+    a trailing ``[``, which nothing else writes; a short flag attaches its value
+    with no ``=``, so the group is stored whole.  A group holding no ``=`` after a
+    long flag is therefore no value: ruby's ``--jit-[option]`` names an optional
+    part of the name, which `_OPTIONAL_PART` reads only where more of the name
+    follows it, and ``--jit-`` is no flag.
+    """
+    if flag.endswith("["):
+        return flag[:-1]
+    return flag if flag.startswith("--") else _ATTACHED_VALUE.sub("", flag)
+
+
 def _passable_flag(flag):
     """The flag a task passes for an option's documented spelling, or None.
 
@@ -518,11 +539,13 @@ def _passable_flag(flag):
     brackets as part of the flag, which no tool accepts.  A bracketed group of
     letters, digits and hyphens that is followed by more of the name is removed,
     which leaves the shortest spelling the notation names, so ``--[no-]verbose``
-    becomes ``--verbose`` rather than its negation.  Any other bracket is not
-    read: a group that ends the flag, as in ``--color[=WHEN]``, makes its value
-    optional and attached, which a task cannot express, and perl's
-    ``-[mM][-]module`` is a set of letters rather than an optional part.  Such an
-    option has no flag to pass.
+    becomes ``--verbose`` rather than its negation.  A group that ends the flag
+    writes its value optional and attached, as in ``--color[=WHEN]`` and
+    ``-I[FMT]``, and `_without_optional_value` removes it, leaving the bare flag,
+    which `_takes_value` reads as the switch it is: the one form of the two a task
+    can pass, as `_entry_spellings` reads ``--check, --check=WORD``.  Any other
+    bracket is not read, so perl's ``-[mM][-]module``, a set of letters rather
+    than an optional part, has no flag to pass.
 
     Every flag, bracketed or not, must then be a flag as `_PLAIN_FLAG` describes,
     so other notation names no flag either: absl's trailing colon, as in bq's
@@ -530,7 +553,7 @@ def _passable_flag(flag):
     in the name, as in gcc's ``-W<warning>`` and zstd's ``-#``; and text that is no
     flag at all, such as the end-of-options marker ``--`` or a ruler of hyphens.
     """
-    plain = _OPTIONAL_PART.sub("", flag)
+    plain = _without_optional_value(_OPTIONAL_PART.sub("", flag))
     return plain if _PLAIN_FLAG.fullmatch(plain) else None
 
 
@@ -1433,7 +1456,8 @@ def _documented_options(doc, synopsis):
     describes, and the option records the flags it does not carry as
     ``other_spellings``, the first long flag it writes other than a flag for false
     as ``first_long``, a flag for false as ``false_flag``, and as ``value_optional``
-    whether one flag is written both bare and attached.
+    whether the flag is written both bare and attached, in two declarations or in
+    one, as ``--color[=WHEN]`` writes it.
     """
     options = []
     for entry, description in _option_entries(doc, synopsis):
@@ -1444,7 +1468,14 @@ def _documented_options(doc, synopsis):
         option.other_spellings = others
         option.first_long = first_long
         option.false_flag = false_flag
-        option.value_optional = value_optional
+        # A value written optional and attached to the flag the option carries, as
+        # GNU ls documents `--color[=WHEN]` and GNU date `-I[FMT]`, says what a bare
+        # and an attached declaration say.  Only the carried flag is read: ruby's
+        # `-Eex[:in], --encoding=ex[:in]` brackets an optional part of a required
+        # value, and the long flag it carries shows the value required.
+        option.value_optional = value_optional or (
+            option.name != _without_optional_value(option.name)
+        )
         option.description = _joined(description)
         repeat = _REPEATED_VALUE.search(flags) or _REPEATED_LIST.search(flags)
         option.repeated = repeat.group(1) if repeat else None
@@ -1482,7 +1513,9 @@ def _entry_spellings(flags):
     value attached, as ``-c, --check, --check=diagnose-first``, so the flag takes
     its value optionally and only attached; `_takes_value` reads such an option as
     the switch, the one form of the two a task can pass, as `_one_per_flag`
-    chooses it across two entries.
+    chooses it across two entries.  One declaration says the same where it
+    brackets the value at the end of the flag, as ``--color[=WHEN]`` does, which
+    `_documented_options` reads from the flag `Option.parse` stores.
 
     The text is returned as written unless a flag for false is removed from it, so
     that `Option.parse` reads every other entry's flags, value and default as it
