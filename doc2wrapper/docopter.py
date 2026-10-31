@@ -49,7 +49,7 @@ _WRAPPED_WORD = re.compile(
 )
 
 # The symbols `parse_pattern` pads with spaces before splitting its source, copied
-# verbatim, so that splitting the padded text yields the tokens it reads.
+# verbatim; `_tokens` splits a text as it does.
 _PATTERN_SYMBOL = re.compile(r"([\[\]\(\)\|]|\.\.\.)")
 
 # A placeholder followed by a repetition of itself, as argparse writes the value of
@@ -832,7 +832,7 @@ def _carried_spellings(formal, options):
     }
     if not carried:
         return formal
-    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    tokens = _tokens(formal)
     safe = {
         spelling: _rewritable(tokens, spelling, option.argcount)
         for spelling, option in carried.items()
@@ -891,7 +891,7 @@ def _single_dash_spellings(formal, options):
     name under a second dash, lengthened with ``_`` until it is a spelling neither
     the options block nor the synopsis writes.
     """
-    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    tokens = _tokens(formal)
     written = {token.partition("=")[0] for token in tokens}
     taken = written | {
         flag for opt in options for flag in (opt.short, opt.long) if flag
@@ -941,7 +941,7 @@ def _synopsis_valued_options(formal, options):
     and its entry ``--[no-]trailer <trailer>``, takes a value only where that
     option does, since `transform` passes the flag from the documented option.
     """
-    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    tokens = _tokens(formal)
     declared, twin_argcount = set(), {}
     for opt in options:
         for flag in (opt.short, opt.long):
@@ -977,15 +977,10 @@ def _synopsis_valued_switches(formal, options):
     so a documented ``-z`` taking a value would no longer take the token after the
     stack, and the synopsis could stop parsing.
     """
-    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    tokens = _tokens(formal)
     flags = _flags_before_placeholders(tokens)
     written = {token.partition("=")[0] for token in tokens}
-    stacked = {
-        "-" + letter
-        for token in tokens
-        if token.startswith("-") and not token.startswith("--") and len(token) > 2
-        for letter in token[1:]
-    }
+    stack_letters = {"-" + letter for token in _stacks(tokens) for letter in token[1:]}
     switches = []
     for index, opt in enumerate(options):
         spellings = [flag for flag in (opt.short, opt.long) if flag in written]
@@ -993,7 +988,7 @@ def _synopsis_valued_switches(formal, options):
             opt.argcount == 0
             and spellings
             and all(flag in flags for flag in spellings)
-            and opt.short not in stacked
+            and opt.short not in stack_letters
             and _passable_flag(opt.name) is not None
         ):
             switches.append(index)
@@ -1029,12 +1024,10 @@ def _flags_before_placeholders(tokens, words=False):
         if long or short:
             taken = _is_placeholder(after) or (words and _is_command_word(after))
             followed[token] = followed.get(token, True) and taken
-    stacked = {
-        "-" + token[-1]
-        for token in tokens
-        if token.startswith("-") and not token.startswith("--") and len(token) > 2
-    }
-    return [flag for flag, always in followed.items() if always and flag not in stacked]
+    stack_ends = {"-" + token[-1] for token in _stacks(tokens)}
+    return [
+        flag for flag, always in followed.items() if always and flag not in stack_ends
+    ]
 
 
 def _is_placeholder(token):
@@ -1042,6 +1035,15 @@ def _is_placeholder(token):
     return not token.startswith("-") and (
         token.startswith("<") and token.endswith(">") or token.isupper()
     )
+
+
+def _stacks(tokens):
+    """The tokens `parse_shorts` may read as a stack of one-letter flags."""
+    return [
+        token
+        for token in tokens
+        if token.startswith("-") and not token.startswith("--") and len(token) > 2
+    ]
 
 
 def _without_value_brackets(formal, options):
@@ -1057,13 +1059,13 @@ def _without_value_brackets(formal, options):
     group holding one placeholder, optionally followed by ``...``, loses its
     brackets; any other group after such an option stays as written.
     """
-    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    tokens = _tokens(formal)
     removed = set()
-    for _option, value in _valued_options(tokens, options):
+    for value in _value_indices(tokens, options):
         closing = _placeholder_group(tokens, value)
         if closing is not None:
             removed.update((value, closing))
-    return " ".join(token for i, token in enumerate(tokens) if i not in removed)
+    return _without_tokens(formal, tokens, removed)
 
 
 def _without_value_repeats(formal, options):
@@ -1083,7 +1085,7 @@ def _without_value_repeats(formal, options):
     other bracket matched as it was, so no synopsis that parses as written stops
     parsing.  The text is returned unchanged where no group is removed.
     """
-    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    tokens = _tokens(formal)
     # An option `_value_taker` registered from the synopsis has no entry and so no
     # `repeated`.
     values = [
@@ -1101,9 +1103,7 @@ def _without_value_repeats(formal, options):
             continue
         if tokens[end + 1 : end + 5] == ["[", placeholder, "...", "]"]:
             removed.update(range(end + 1, end + 5))
-    if not removed:
-        return formal
-    return " ".join(token for i, token in enumerate(tokens) if i not in removed)
+    return _without_tokens(formal, tokens, removed)
 
 
 def _without_value_prefixes(formal, options):
@@ -1127,12 +1127,12 @@ def _without_value_prefixes(formal, options):
     parses only without the removal, as an unbalanced one can, `_read_command_line`
     reads it so.  The text is returned unchanged where nothing is removed.
     """
-    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
-    taken = {value for _option, value in _valued_options(tokens, options)}
+    tokens = _tokens(formal)
+    taken = _value_indices(tokens, options)
 
     def without(match):
-        opening = len(_PATTERN_SYMBOL.sub(r" \1 ", formal[: match.start()]).split())
-        after = opening + len(_PATTERN_SYMBOL.sub(r" \1 ", match.group()).split())
+        opening = len(_tokens(formal[: match.start()]))
+        after = opening + len(_tokens(match.group()))
         rest = tokens[after] if after < len(tokens) else ""
         if _is_placeholder(rest) or _is_command_word(rest):
             if taken.isdisjoint(range(opening + 1, after)):
@@ -1166,8 +1166,8 @@ def _distributed_values(formal, options):
     `_read_command_line` reads it without the rewrite.  The text is returned
     unchanged where nothing is rewritten.
     """
-    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
-    taken = {value for _option, value in _valued_options(tokens, options)}
+    tokens = _tokens(formal)
+    taken = _value_indices(tokens, options)
     switches = {
         flag
         for option in options
@@ -1245,8 +1245,8 @@ def _without_attached_values(formal, options):
     `_without_value_brackets` to read on the retry.  The text is returned
     unchanged where no group is removed.
     """
-    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
-    consumed = {value for _option, value in _valued_options(tokens, options)}
+    tokens = _tokens(formal)
+    taken = _value_indices(tokens, options)
     removed = set()
     for index, token in enumerate(tokens[:-3]):
         if not token.startswith("--") or token == "--" or "=" in token:
@@ -1254,11 +1254,9 @@ def _without_attached_values(formal, options):
         opening, value, closing = tokens[index + 1 : index + 4]
         if opening != "[" or closing != "]" or value[:1] != "=" or value == "=":
             continue
-        if index + 1 not in consumed:
+        if index + 1 not in taken:
             removed.update(range(index + 1, index + 4))
-    if not removed:
-        return formal
-    return " ".join(token for i, token in enumerate(tokens) if i not in removed)
+    return _without_tokens(formal, tokens, removed)
 
 
 def _without_literal_alternatives(formal, options):
@@ -1275,9 +1273,9 @@ def _without_literal_alternatives(formal, options):
     Only bars and words are removed, never a bracket, which never changes whether
     the text parses.  The text is returned unchanged where nothing is removed.
     """
-    tokens = _PATTERN_SYMBOL.sub(r" \1 ", formal).split()
+    tokens = _tokens(formal)
     removed = set()
-    for _option, value in _valued_options(tokens, options):
+    for value in _value_indices(tokens, options):
         if value < 2 or tokens[value - 2] != "[":
             continue
         if not _is_command_word(tokens[value]):
@@ -1289,9 +1287,27 @@ def _without_literal_alternatives(formal, options):
             end += 2
         if end > value + 1 and tokens[end : end + 1] == ["]"]:
             removed.update(range(value + 1, end))
+    return _without_tokens(formal, tokens, removed)
+
+
+def _tokens(text):
+    """The tokens `parse_pattern` reads `text` as, its symbols padded with spaces."""
+    return _PATTERN_SYMBOL.sub(r" \1 ", text).split()
+
+
+def _without_tokens(formal, tokens, removed):
+    """`formal` without the `tokens` whose indices `removed` holds.
+
+    The text is returned unchanged where `removed` is empty.
+    """
     if not removed:
         return formal
     return " ".join(token for i, token in enumerate(tokens) if i not in removed)
+
+
+def _value_indices(tokens, options):
+    """The indices of the `tokens` that options take as their values."""
+    return {value for _option, value in _valued_options(tokens, options)}
 
 
 def _valued_options(tokens, options):
