@@ -60,6 +60,13 @@ _PATTERN_SYMBOL = re.compile(r"([\[\]\(\)\|]|\.\.\.)")
 # placeholder `N`.
 _REPEATED_VALUE = re.compile(r"(?:^|\s|--[^\s=]+=)([^\s\[\]-]\S*) \[\1 \.\.\.\]")
 
+# The bracketed list argparse writes for the value of an `nargs="*"` option, as in
+# `-n, --normal [FILES ...]`.  The list must be the flag's own value, so zipfile's
+# `-c, --create <name> [<file> ...]`, whose list is a further operand, is no match.
+# `_documented_options` records it as `repeated`, as it does `_REPEATED_VALUE`:
+# both say that one flag takes the whole list.
+_REPEATED_LIST = re.compile(r"(?:^|\s)--?[^\s,=]+[ =]\[([^\s\[\]-]\S*) \.\.\.\]")
+
 # A bracketed optional part inside a flag's name, as in `--region[s]-file`, and
 # what a flag is: one or two hyphens and a name of word characters, which may hold
 # `.`, `@`, `+` and hyphens, as `--disable-@files`, `-nostdinc++` and gcc's `-I-`
@@ -184,7 +191,7 @@ def parse(doc):
     #               # / there isn't one.
     #   description # set by `_documented_options`, not by docopt
     #   repeated    # likewise: the placeholder an entry repeats, as in
-    #               # `-n NORMAL [NORMAL ...]`, or None
+    #               # `-n NORMAL [NORMAL ...]` and `-n [FILES ...]`, or None
     #   declared_type
     #               # likewise: for an option with argcount 0, the type its
     #               # description states it takes a value of, as `_value_kind`
@@ -200,9 +207,13 @@ def parse(doc):
     #   value_optional
     #               # likewise: whether the entry writes the flag both bare and
     #               # with a value attached, as in `--check, --check=WORD`
+    #   repeats_flag
+    #               # set here: whether the synopsis repeats the option itself
+    #               # with `...`, as in `-e PATTERN ...`, so that its flag
+    #               # precedes each value, as `_repeated_options` reads it
     options = _documented_options(doc, synopsis)
     documented = len(options)
-    cli_prefix, positionals = _read_command_line(printable, usage, options)
+    cli_prefix, positionals, repeating = _read_command_line(printable, usage, options)
     # `_read_command_line` appends the options named only in the synopsis, which
     # have no options-block entry and so no description.
     for option in options[documented:]:
@@ -213,6 +224,8 @@ def parse(doc):
         option.other_spellings = ()
         option.false_flag = ""
         option.value_optional = False
+    for option in options:
+        option.repeats_flag = _passable_flag(option.name) in repeating
     _positional_descriptions(doc, synopsis, positionals)
     return ParsedHelp(usage, cli_prefix, positionals, options)
 
@@ -334,9 +347,13 @@ def transform(usage, cli_prefix, positionals, options):
                 file=sys.stderr,
             )
             continue
-        # A repeated placeholder is argparse's `nargs="+"`: one flag, then the list.
-        is_array = opt.repeated is not None
         takes_value = _takes_value(opt)
+        # A repeated placeholder in the entry is argparse's `nargs="+"` or
+        # `nargs="*"`: one flag takes the whole list.  A `...` in the synopsis over
+        # the option repeats the flag instead, once before each value.  The entry
+        # states how many values one occurrence takes, so it wins.
+        flag_per_value = opt.repeats_flag and takes_value and opt.repeated is None
+        is_array = opt.repeated is not None or flag_per_value
         # The templates' output sections name one file, so an output option that
         # takes a list is an ordinary input.
         if option_flag in _OUTPUT_OPTIONS and takes_value and not is_array:
@@ -378,6 +395,7 @@ def transform(usage, cli_prefix, positionals, options):
                 option_flag=option_flag,
                 false_flag=false_flag,
                 option_has_value=takes_value,
+                flag_per_value=flag_per_value,
                 doc=opt.description,
             )
         )
@@ -525,6 +543,12 @@ def _identifier(token):
 def _read_command_line(printable, usage, options):
     """Read the command words and positional arguments out of the usage line's tree.
 
+    Return the CLI prefix, the positionals, and the flags, as `_passable_flag` gives
+    them, of the options the tree repeats, as `_repeated_options` reads them.  The
+    flag rather than the option is returned, so that the repetition reaches the
+    option `transform` passes it from where the synopsis spells it otherwise, as
+    git's synopsis writes ``--trailer`` and its entry ``--[no-]trailer``.
+
     `printable` must still carry its `usage:` marker: `formal_usage` drops the first
     token of what it is given and treats the next as the program name, so passing
     the marker-stripped `usage` instead makes it eat the program name and lose the
@@ -595,7 +619,7 @@ def _read_command_line(printable, usage, options):
         )
         # What the last reading, the text as written, registered before it failed.
         options[documented:] = reading[documented:]
-        return " ".join(words), []
+        return " ".join(words), [], set()
     first = {}
     for index, leaf in enumerate(pattern.flat(docopt.Option)):
         first.setdefault((leaf.short, leaf.long), index)
@@ -605,6 +629,18 @@ def _read_command_line(printable, usage, options):
     )
     for index in switches:
         options[index].argcount, options[index].value = 1, None
+    # The tree's options are copies, and a reading may hold a documented option's
+    # copy carrying another spelling, so each is traced to the option kept here.
+    kept = {}
+    for index, opt in enumerate(reading):
+        kept.setdefault(
+            (opt.short, opt.long), options[index] if index < documented else opt
+        )
+    repeating = {
+        _passable_flag(kept[key].name)
+        for key in _repeated_options(pattern)
+        if key in kept
+    } - {None}
     # `formal_usage` wraps each line of the synopsis in parentheses and joins the
     # lines with `|`, so the tree's one child is either an Either of the lines or
     # the single line itself.  A synopsis that closes and reopens a parenthesis, as
@@ -639,7 +675,37 @@ def _read_command_line(printable, usage, options):
             )
             continue
         positionals.append(slot)
-    return prefix, positionals
+    return prefix, positionals, repeating
+
+
+def _repeated_options(pattern):
+    """The ``(short, long)`` flags of the options the synopsis repeats with ``...``.
+
+    `parse_seq` wraps in `OneOrMore` whatever atom a ``...`` follows, and an option
+    has taken its value by then, so a repetition written after an option's value,
+    as ripgrep writes ``-e PATTERN ...``, or after a group holding the option, as
+    in ``[-D <name>]...``, repeats the option itself: its flag is written once per
+    value, as docopt reads ``[-o <o>]...`` for ``-o a -o b``.  An options-block
+    entry instead states how many values one occurrence takes, which `repeated`
+    records, so `transform` reads the two together.
+
+    Only a repetition holding exactly one option that takes a value is read.  A
+    repeated switch is a count, which no target language can express, and a
+    repetition over two options taking values, as in ``(-a <x> -b <y>)...``,
+    repeats the pair rather than either flag.
+
+    A repetition over one option written in two alternatives, as in
+    ``(-e <p> | --regexp <p>)...`` for ``-e, --regexp``, is a repetition over that
+    option.
+    """
+    repeated = []
+    for node in pattern.flat(docopt.OneOrMore):
+        valued = {
+            (opt.short, opt.long) for opt in node.flat(docopt.Option) if opt.argcount
+        }
+        if len(valued) == 1:
+            repeated.extend(valued)
+    return repeated
 
 
 def _readings(formal, entries):
@@ -942,9 +1008,9 @@ def _flags_before_placeholders(tokens, words=False):
     description could: given one, bedtools slop's ``-r`` would take the ``)`` of
     ``(-l and -r)``.  For the same reason a short flag whose letter ends a stack of
     letters, as ``z`` ends ``-pz``, is not among them, since the stack would take
-    the token after it.  A placeholder followed by ``...`` is taken as one value,
-    so ``-i <file>...`` passes one file: read as a positional list, the files would
-    precede the flag.
+    the token after it.  A placeholder followed by ``...`` is the flag's one value,
+    and `_repeated_options` reads the repetition, so ``-i <file>...`` passes the
+    flag before each file rather than a positional list before the flag.
 
     A command word taken as a value never shortens the CLI prefix: the command
     words `_command_words` reads follow the program name directly, never a flag.
@@ -1322,7 +1388,7 @@ def _documented_options(doc, synopsis):
         option.false_flag = false_flag
         option.value_optional = value_optional
         option.description = _joined(description)
-        repeat = _REPEATED_VALUE.search(flags)
+        repeat = _REPEATED_VALUE.search(flags) or _REPEATED_LIST.search(flags)
         option.repeated = repeat.group(1) if repeat else None
         option.declared_type = None if option.argcount else _value_kind(description)
         option.attached = any(

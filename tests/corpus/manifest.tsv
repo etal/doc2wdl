@@ -16,7 +16,7 @@ zstd	degraded	stdout	zstd 1.5.7, conda-forge build	zstd --help	the options block
 zipfile	parsed	stdout	Python 3.13.12	python3 -m zipfile -h	the second value of -e and the list after the value of -c are read as one positional; the wrapped synopsis line opening with -c is synopsis, not an option entry
 samtools-stats	parsed	stdout	samtools 1.23.1	samtools stats --help	[OPTIONS] read as a positional; the options block directly under the synopsis ends it
 wgsim	parsed	stderr	wgsim 1.23.1	wgsim	positionals recovered cleanly
-cnvkit-batch	parsed	stdout	CNVkit 0.9.15.dev0	cnvkit.py batch -h	positionals recovered cleanly once the brackets argparse writes around an optional value, as in [-p [PROCESSES]], are removed on a second reading
+cnvkit-batch	parsed	stdout	CNVkit 0.9.15.dev0	cnvkit.py batch -h	positionals recovered cleanly once the brackets argparse writes around an optional value, as in [-p [PROCESSES]], are removed on a second reading; -n [FILES ...] is one option taking a list
 miniwdl-check	parsed	stdout	miniwdl 1.14.2	miniwdl check --help	argparse's WDL_URI [WDL_URI ...] read as two positionals
 tabix	parsed	stdout	htslib 1.23.1	tabix --help	[OPTIONS] and ... read as positionals
 bedtools-intersect	parsed	stderr	bedtools 2.31.1	bedtools intersect --help	[OPTIONS] read as a positional; -a and -b, which the options block omits, take the placeholders the synopsis writes after them; -f and -F, whose descriptions name the value's type, take a value, while options whose value only prose describes, such as -g and -iobuf, read as switches

@@ -555,7 +555,7 @@ Over the 8,108,730 token sequences of one to six tokens drawn from `[ ] ( ) | ..
 The alphabet writes no attached value, and with one the rule can let a synopsis parse that did not: `--foo <X> --foo=<Y>`, with `--foo` undocumented, used to register `--foo` as a switch at its bare spelling and then reject the attached value.
 A flag that matches a documented option only once `_passable_flag` removes its notation, as the synopsis's `--trailer` matches the entry `--[no-]trailer <trailer>`, takes a value only where that option does, since `transform` passes the flag from the documented option and a switch would leave the placeholder nowhere.
 For the same reason a flag that `_passable_flag` rejects, such as absl's `--apilog:`, takes no value.
-A placeholder followed by `...` is taken as one value, so `-i <file>...` passes one file: read as a positional list, as it used to be, the files were passed before the flag.
+A placeholder followed by `...` is taken as one value, so `-i <file>...` passed one file until D44 read the repetition; read as a positional list, as before D34, the files were passed before the flag.
 Where the synopsis does not parse with these options it is read without them, so a degraded record is read exactly as before, and the options the synopsis alone names keep the order the tree first names them in, so that a flag given its value first does not move ahead of the others.
 An option the tree never names, because an option before it took it as its value, is dropped, as it would never have been registered.
 A documented switch whose synopsis occurrences are all followed by a placeholder, such as bedtools genomecov's `-g <genome>`, kept the arity its entry gives, until D40.
@@ -708,6 +708,20 @@ Each removes or moves a balanced run of tokens, so every other bracket stays mat
 Over the 242 help texts, two records change, and no outcome class, CLI prefix or warning moves: git-commit loses its positionals `commit`, `:` and a second `commit`, and ssh's `-D` takes `port`, which loses the positionals `bind_address` and `port`.
 Each changed document passes `miniwdl check` and `nextflow lint`, and both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
 git 2.56.0 accepts `-c X`, `-C X`, `--squash X`, `--fixup X` and `--fixup amend:X`, each as one value, and the probe of D41 found that ssh's `-D` takes a value.
+
+**D44** — a repetition written after an option was lost, so the task passed one value.
+docopt's `parse_seq` wraps in `OneOrMore` whatever atom a `...` follows, and an option has taken its value by then, so `-i <file>...` and `[-D <name>]...` both repeat the option itself, as docopt's own grammar reads `[-o <o>]...` for `-o a -o b`; nothing read a repetition over an option, so each such input was a scalar.
+`docopter._repeated_options` now reads, in the tree, each `OneOrMore` that holds exactly one option taking a value, and `transform` makes that option an array whose flag precedes each value, `Argument.flag_per_value`, as the argparse reader models `append`.
+A repeated switch is a count, which no target language can express, and a repetition over two options taking values, as in `(-a <x> -b <y>)...`, repeats the pair, so neither is read.
+Reading `-i <file>...` as one flag followed by the list, as D22 reads `-n N [N ...]`, and only `[-D <name>]...` as a flag per value was considered and not adopted: the tree does not distinguish the two, and every surveyed instance repeats the flag.
+Probed, BSD sed's `-e x y` reads `y` as a file while `-e x -e y` runs both scripts, ripgrep 15.1.0's `-e alpha beta` reads `beta` as a path while `-e alpha -e beta` matches both, ssh-keygen accepts `-O` more than once, and git's manual page writes `--trailer "A" --trailer "B"`.
+An entry that states how many values one occurrence takes wins over the repetition: D22's `-n N [N ...]` and argparse's `nargs="*"`, written `-n [FILES ...]`, which `_documented_options` now also records as `repeated` with `docopter._REPEATED_LIST`, give one flag the whole list.
+Without that, cnvkit batch's `[-n [FILES ...]]`, which D18's retry reads as `-n FILES ...`, would have passed `--normal a --normal b`, which argparse reads as `['b']`.
+The list form loses one reading of `nargs="*"`: an empty list elides the flag, so the bare `-n`, which cnvkit reads as a flat reference, cannot be passed, as D18 records for `--processes`.
+The repetition is returned as the flag `_passable_flag` gives, rather than as an option, since git's synopsis names `--trailer` where its entry writes `--[no-]trailer`, and `transform` passes the flag from the documented option; a reading's copy of a documented option, which D39 and D40 make, is traced to the option `parse` returns.
+The tree is read after it is parsed and no text is rewritten, so no synopsis can start or stop parsing.
+Over the 242 help texts, seven records change, and no outcome class, CLI prefix, positional or warning moves: ripgrep's `--regexp` and `--file`, git-commit's `--trailer`, BSD sed's `-e` and `-f`, ssh-keygen's `-O` and Rscript's `-e` become arrays passing their flag before each value, and both captures of cnvkit batch's `--normal` an array passing it once; Rscript, which is not installed, was not probed.
+Each changed document passes `miniwdl check` and `nextflow lint`, and both fixtures generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
 
 ### Working on the vendored parser
 

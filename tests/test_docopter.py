@@ -1093,8 +1093,6 @@ def test_a_type_bullet_leaves_the_synopsis_reading_alone(capsys):
         # BSD writes a lowercase placeholder, which docopt reads as a command word.
         ("-f", "file", "f"),
         ("--files0-from", "file", "files0_from"),
-        # One value: as a positional list, the files would precede the flag.
-        ("-i", "<file>...", "i"),
     ],
 )
 def test_an_undocumented_flag_before_a_placeholder_takes_it_as_its_value(
@@ -1111,6 +1109,54 @@ def test_an_undocumented_flag_before_a_placeholder_takes_it_as_its_value(
         (arg.name, arg.option_flag, arg.option_has_value, arg.is_array)
         for arg in task["cli_args"]
     ] == [("in", "", False, False), (name, flag, True, False)]
+
+
+@pytest.mark.parametrize(
+    "synopsis, entry, flag_per_value",
+    [
+        # docopt reads `...` after an option's value as repeating the option.
+        ("-i <file>...", "", True),
+        ("[-i <file>]...", "", True),
+        # ripgrep documents `-e`, and writes `-e PATTERN ...` in its synopsis.
+        ("[-i FILE ...]", "  -i FILE  A file to read.\n", True),
+        # argparse's `nargs="*"`: the entry says one flag takes the whole list.
+        ("[-i [FILE ...]]", "  -i [FILE ...]  Files to read.\n", False),
+    ],
+)
+def test_a_repeated_option_is_a_list(synopsis, entry, flag_per_value, capsys):
+    """The flag precedes each value unless the entry gives one flag the list."""
+    doc = f"Usage: tool {synopsis} <in>\n\nOptions:\n{entry}"
+    task = docopter.transform(*docopter.parse(doc))
+    assert capsys.readouterr().err == ""
+    assert [
+        (arg.option_flag, arg.is_array, arg.flag_per_value) for arg in task["cli_args"]
+    ] == [("", False, False), ("-i", True, flag_per_value)]
+
+
+def test_a_repetition_over_both_spellings_of_one_option_is_its_list():
+    """`[-i <f> | --input <f>]...` repeats one option, whichever spelling is used."""
+    doc = "Usage: tool [-i <f> | --input <f>]... <in>\n\n  -i, --input FILE  A file.\n"
+    task = docopter.transform(*docopter.parse(doc))
+    assert [
+        (arg.option_flag, arg.is_array, arg.flag_per_value) for arg in task["cli_args"]
+    ] == [("", False, False), ("--input", True, True)]
+
+
+@pytest.mark.parametrize("synopsis", ["[-v]...", "(-a <x> -b <y>)...", "-a <x> <y>..."])
+def test_a_repetition_that_is_no_options_list_makes_no_array(synopsis):
+    """A repeated switch is a count, and a repeated pair repeats neither flag alone."""
+    task = docopter.transform(*docopter.parse(f"Usage: tool {synopsis}\n"))
+    assert not any(arg.is_array for arg in task["cli_args"] if arg.option_flag)
+
+
+def test_a_repeated_option_with_no_passable_flag_marks_no_other_option():
+    """A repeated option with no flag to pass marks no other such option repeated."""
+    doc = "usage: tool [--apilog: <p>]... [--x: <q>] <in>\n\n  --apilog: P  Log.\n  --x: Q  X.\n"
+    options = docopter.parse(doc).options
+    assert [(opt.long, opt.repeats_flag) for opt in options] == [
+        ("--apilog:", False),
+        ("--x:", False),
+    ]
 
 
 @pytest.mark.parametrize(
