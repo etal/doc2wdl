@@ -477,17 +477,24 @@ def test_every_identifier_starts_with_a_letter(token):
     assert docopter._identifier(token)[:1].isalpha()
 
 
-def test_identifiers_keep_only_legal_characters():
-    """Help-text punctuation is an open set, so only legal characters survive."""
+def test_identifiers_separate_words_at_punctuation():
+    """Help-text punctuation is an open set, so every illegal character is mapped.
+
+    Punctuation inside a token separates words, and at either end it is notation;
+    a run of underscores collapses to one, even in a name that was already legal.
+    """
     assert docopter._identifier("<in.bam>") == "in_bam"
     assert docopter._identifier("--min-size") == "min_size"
     assert docopter._identifier("-1") == "arg_1"
-    assert docopter._identifier("<a/b>") == "ab"
+    assert docopter._identifier("<a/b>") == "a_b"
+    assert docopter._identifier("<chr:from-to>") == "chr_from_to"
+    assert docopter._identifier("[FILES]...") == "FILES"
+    assert docopter._identifier("a__b") == "a_b"
 
 
 def test_task_title_is_a_legal_identifier():
     """`2to3` and `run.sh` would otherwise name a task WDL cannot parse."""
-    for usage, expected in (("2to3", "Task2To3"), ("run.sh", "Run_Sh")):
+    for usage, expected in (("2to3", "Task2To3"), ("run.sh", "RunSh")):
         task = docopter.transform(*docopter.parse(f"Usage: {usage} <f>\n"))
         assert task["title"] == expected
 
@@ -1203,6 +1210,17 @@ def test_a_positional_entry_without_a_description_leaves_it_to_a_later_one():
     doc = "Usage: tool FILE\n\nArguments:\n  FILE\n\n  FILE  The input.\n"
     positionals = docopter.parse(doc).positionals
     assert positionals[0].description == "The input."
+
+
+def test_a_positional_written_in_brackets_takes_its_entry():
+    """clap writes `[FILES]...` in the synopsis and in the entry alike."""
+    doc = (
+        "Usage: ruff check [OPTIONS] [FILES]...\n\nArguments:\n"
+        "  [FILES]...\n          List of files to check\n"
+    )
+    positionals = docopter.parse(doc).positionals
+    assert positionals[-1].spellings == ["FILES"]
+    assert positionals[-1].description == "List of files to check"
 
 
 def test_prose_opening_with_a_positionals_name_is_no_entry():

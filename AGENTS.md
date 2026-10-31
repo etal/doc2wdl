@@ -618,6 +618,25 @@ A flag for false that another entry also documents is not compared by `_one_per_
 A slash between two spellings of one value, as hand-written help might write `-v / --verbose`, is read as click's pair.
 A synopsis spelling whose carried flag two entries declare is not rewritten, since `parse_long` would reject the carried flag as ambiguous, so it stays an input of its own.
 
+**D38** — punctuation inside a name was deleted, so the words it separated were joined.
+`tasktree.legal_name` mapped `-` and `.` to `_` and deleted every other character outside `[A-Za-z0-9_]`, a rule from the first draft whose deletion half had been argued only from `FILE(S)`, `<a/b>` and `<n,m>`.
+mypy's parser declares 20 dests such as `special-opts:python_version`, which became `special_optspython_version`, and help-text placeholders such as bedtools' `<bed/gff/vcf>` and samtools' `<chr:from-to>` became `bedgffvcf` and `chrfrom_to`.
+`legal_name` now maps every character that `tasktree._ILLEGAL` matches, which is every character outside `[A-Za-z0-9_]`, to `_`, collapses runs of underscores, and removes those at either end, before the prefix rule; `task_title` deletes every such character itself before calling it, so a title stays one capitalized word, as its word-boundary rule intends.
+Mapping only `:` was measured and not adopted: it fixes mypy and two help-text names, and gives ssh's `:remote_tun`, `bind_address:` and git-commit's `:` the names `arg__remote_tun`, `bind_address_` and `arg__`, while 15 other names with joined words remain.
+Mapping every character without the trim, or a chosen set of separators, gives `arg__FORMAT`, `arg__num` and gcc's `ObjC__`, and loses GNU date's `FORMAT` description, since `+FORMAT` no longer names the positional.
+The trim also removes the notation around a token, so `docopter._identifier` and the argparse reader's flag-named inputs no longer strip hyphens and angle brackets themselves.
+Because `_positional_descriptions` matches an entry to a positional by identifier, an entry that writes its positional as the synopsis does, as clap's `[FILES]...`, now describes it: `ruff check`, `ruff format`, `rg`, `cargo run`, `pixi run` and `uv pip install` each gain one description, where `FILES___` had failed to match `FILES`.
+Over 242 help texts, the 180 captured on 2026-10-24, the 43 bedtools subcommands, the corpus and the fixtures, 37 records change and no outcome class, CLI prefix, option set or warning moves: 33 inputs are renamed, such as `bed_gff_vcf`, `chr_from_to`, `host_port`, `NAME_VALUE`, `data_dir_path` from `arg___data_dirpath`, and `arg_` from the `arg____` that `...` gave, six positionals gain a description, and `python3 -m zipfile` titles `Main` rather than `Task__Main__`.
+Over the argparse parsers of mypy, `mypy.dmypy.client`, miniwdl, torchrun and `build`, only mypy's 20 `special-opts:` inputs change, to names such as `special_opts_python_version`.
+Every changed document passes `miniwdl check` and `nextflow lint`, and both fixtures and `cnvlib.commands.AP` generate byte-identical WDL and Nextflow, verified by comparing the generated text before and after.
+A name that is already a legal identifier is no longer always kept as written: `a__b` becomes `a_b` and `_private` becomes `private`, and `class_` becomes `class`, to which the Nextflow writer's keyword rename restores the underscore; no measured parser declares such a dest.
+A trailing hyphen no longer distinguishes a flag's name, so gcc's `-I-`, declared first, takes the name `I` and its `-I <dir>` becomes `I_2`, where they were `I_` and `I`.
+The name `I` therefore denotes a different input than before, a switch rather than a directory, so a value written for an earlier wrapper reaches the wrong flag: WDL rejects a path given for a `Boolean`, while the Nextflow process tests the switch by truth and passes `-I-` for any nonempty text.
+bedtools' `-name` and `-name+` already shared the name `name` under the old rule, which deleted `+`, so they are numbered as before.
+Grouping punctuation inside a token separates too, so `FILE(S)` would become `FILE_S`; no captured help text names a positional or option that way.
+A word that ends a sentence, or the first part of a hyphenated word, and that wraps onto a line of its own indented less than the description column now names the positional of that word, as `command.` and `command-` name `command`, so the line ends the description being read and a deeper line after it can describe that positional.
+Under the old rule this happened only to a word followed by another mark, such as `command,`; no captured help text is affected.
+
 ### Working on the vendored parser
 
 `doc2wrapper/_docopt.py` is docopt 0.6.2 with every definition of the runtime argv-matching path deleted whole, and `parse_defaults` with it, and nothing else changed except two regex literals that gained the `r` prefix they always needed.

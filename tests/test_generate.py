@@ -277,11 +277,12 @@ def test_subcommands_differing_in_case_or_punctuation_name_distinct_tasks(
     "prog, title",
     [
         ("9x", "Task9X"),
-        ("_x", "Task_X"),
-        ("a.b", "A_B"),
+        # A leading underscore is removed rather than prefixed.
+        ("_x", "X"),
+        ("a.b", "AB"),
         ("/usr/bin/tool", "UsrBinTool"),
         ("-", "Task"),
-        # A letter `legal_name` drops leaves the next one at a word boundary, so the
+        # A letter the title removes leaves the next one at a word boundary, so the
         # title is not the Groovy keyword `def`.
         ("ñdef", "Def"),
     ],
@@ -300,13 +301,20 @@ def test_an_argparse_title_is_a_legal_identifier(
 
 
 def test_argparse_destinations_become_legal_identifiers(check_wdl, wdl_command):
-    """argparse accepts a `dest` no target language accepts as a name."""
+    """argparse accepts a `dest` no target language accepts as a name.
+
+    Each punctuation mark separates words, as mypy's `special-opts:` dests show.
+    """
     parser = argparse.ArgumentParser(prog="tool", add_help=False)
     parser.add_argument("in-file")
     parser.add_argument("--fast", dest="a.b", action="store_true")
+    parser.add_argument("--version", dest="special-opts:python_version")
     wdl = wdlgen.render(argparser.unpack_tasks(parser, "tool"))
     check_wdl(wdl)
-    assert wdl_command(wdl, in_file="x", a_b=True) == "tool x --fast"
+    assert (
+        wdl_command(wdl, in_file="x", a_b=True, special_opts_python_version="3.13")
+        == "tool x --fast --version 3.13"
+    )
 
 
 def test_a_switch_split_over_two_actions_renders_as_one(check_wdl, wdl_command):

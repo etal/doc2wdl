@@ -219,15 +219,28 @@ def _fits(value_type, value, is_array):
     return _value_type_of(value, False) in _ACCEPTS[value_type]
 
 
-def legal_name(name, prefix):
-    """Keep only the characters a target language accepts, and start with a letter.
+#: The characters WDL does not accept in a name.  Groovy accepts all of the
+#: others, so one class serves every writer.
+_ILLEGAL = re.compile(r"[^A-Za-z0-9_]")
 
-    WDL requires an identifier to begin with a LETTER: a leading underscore is
-    rejected exactly as a leading digit is, so the prefix has to be a real word.
-    Applied by the readers because a name legal in WDL is also legal in Groovy,
-    which keeps one rule rather than one per writer.
+
+def legal_name(name, prefix):
+    """Make a name an identifier a target language accepts, starting with a letter.
+
+    Every illegal character becomes an underscore, because punctuation inside a
+    name separates words: `<bed/gff/vcf>` becomes `bed_gff_vcf` and mypy's dest
+    `special-opts:python_version` becomes `special_opts_python_version`.  Runs of
+    underscores are collapsed and those at either end removed, so the notation
+    around a token, as in `--min-size` or `[FILES]...`, leaves no trace, and a
+    token names the same identifier wherever the help text writes it.
+
+    WDL requires an identifier to begin with a LETTER, and rejects a leading
+    underscore exactly as it rejects a leading digit, so a name that still does not
+    begin with one takes a prefix that is itself a word.  Applied by the readers
+    because a name legal in WDL is also legal in Groovy, which keeps one rule
+    rather than one per writer.
     """
-    kept = re.sub(r"[^A-Za-z0-9_]", "", re.sub(r"[-.]", "_", name))
+    kept = re.sub(r"_+", "_", _ILLEGAL.sub("_", name)).strip("_")
     return kept if kept[:1].isalpha() else prefix + kept
 
 
@@ -238,16 +251,16 @@ def task_title(command):
     removal erases still show: `CnvkitAntitarget`.  Unlike `str.title`, letters
     that are not at a word boundary keep their case, so that subcommands `runAll`
     and `runall` name two tasks rather than one, and `SAMtools` stays as written.
-    Only ASCII letters count as part of a word, because `legal_name` removes any
-    other letter, which then cannot join what follows: a letter after `ñ` starts a
-    word, and `ñdef` cannot become the Groovy keyword `def`.
+    Only ASCII letters count as part of a word, so a letter after any other
+    character starts one: `my_tool` titles `My_Tool`, and because `ñ` is removed,
+    `ñdef` titles `Def` rather than the Groovy keyword `def`.
     """
     capitalized = re.sub(
         r"(?<![A-Za-z])[a-z]",
         lambda match: match.group().upper(),
         command.replace(".py", ""),
     )
-    return legal_name(capitalized.replace(" ", "").replace("-", ""), prefix="Task")
+    return legal_name(_ILLEGAL.sub("", capitalized), prefix="Task")
 
 
 def rename_arguments(cli_args, reserved):

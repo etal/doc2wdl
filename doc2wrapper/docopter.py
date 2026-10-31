@@ -503,15 +503,14 @@ def _passable_flag(flag):
 def _identifier(token):
     """Turn a usage token such as ``<in.bam>`` or ``--min-size`` into an identifier.
 
-    Help text carries punctuation that no target language accepts in a name, and it
-    is not a closed set -- `FILE(S)`, `<a/b>` and `<n,m>` all occur -- so this keeps
-    what is legal rather than removing what is known to be illegal.
+    Help text carries punctuation that no target language accepts in a name, and
+    `legal_name` decides what becomes of it.
 
     `OUTPUT_FILE_NAME` is never returned: it belongs to the output option, `--output`
     or `-output` taking a value, whose input the templates' output sections name,
     and no other argument may take it.
     """
-    name = legal_name(token.lstrip("-").strip("<>"), prefix="arg_")
+    name = legal_name(token, prefix="arg_")
     return name + "_" if name == OUTPUT_FILE_NAME else name
 
 

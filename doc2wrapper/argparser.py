@@ -173,7 +173,7 @@ def _arguments(actions, filling):
             yield replace(
                 arg,
                 name=(
-                    legal_name(arg.option_flag.lstrip("-"), prefix="arg_")
+                    legal_name(arg.option_flag, prefix="arg_")
                     if arg.option_flag
                     else dest_name
                 ),
