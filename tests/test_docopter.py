@@ -863,10 +863,15 @@ def test_a_flag_written_with_its_value_spaced_and_attached_takes_a_value():
         ("-W[level]", "-W"),
         # `Option.parse` splits the flags at `=`, so the bar is part of the value.
         ("--color[=WHEN]|--colour", "--color"),
+        # `Option.parse` keeps `-W[level` of ruby's short flag.
+        ("-W[level=2]", "-W"),
     ],
 )
 def test_an_optional_attached_value_in_an_entry_is_the_switch(entry, flag, capsys):
-    """GNU ls documents `--color[=WHEN]`, as GNU sort `--check, --check=WORD`."""
+    """An entry that brackets its value at the end of the flag is the switch.
+
+    The value is attached only, and a task passes a value after a space.
+    """
     doc = f"Usage: ls [OPTION]... [FILE]...\n\n  {entry}  Something.\n"
     assert inputs(doc) == [(flag, "", False, "Something.")]
     assert capsys.readouterr().err == ""
@@ -878,15 +883,31 @@ def test_an_optional_part_of_a_required_value_keeps_the_value():
     assert inputs(doc) == [("--encoding", "", True, "Encoding.")]
 
 
-@pytest.mark.parametrize("synopsis", ["[--color] FILE", "[--color=WHEN] FILE"])
-def test_a_synopsis_naming_an_entrys_optional_value_flag_still_parses(synopsis):
+def test_the_negation_of_a_flag_with_an_optional_value_is_its_flag_for_false():
+    """`--color[=WHEN], --no-color` is one switch, as `--color, --no-color` is."""
+    doc = "Usage: ls [OPTION]\n\n  --color[=WHEN], --no-color  Colorize.\n"
+    assert inputs(doc) == [("--color", "--no-color", False, "Colorize.")]
+
+
+@pytest.mark.parametrize(
+    "synopsis, entry, flag",
+    [
+        ("[--color] FILE", "--color[=WHEN]", "--color"),
+        ("[--color=WHEN] FILE", "--color[=WHEN]", "--color"),
+        # The value of `-q[l]` is attached only, so `-q` takes no token after it.
+        ("-q FILE", "-q[l]", "-q"),
+    ],
+)
+def test_a_synopsis_naming_an_entrys_optional_value_flag_still_parses(
+    synopsis, entry, flag
+):
     """The entry's flag stays `--color[` to the synopsis, which names `--color`.
 
     The synopsis registers a flag of its own, which the described entry outranks.
     """
-    doc = f"Usage: ls {synopsis}\n\n  --color[=WHEN]  Colorize.\n"
+    doc = f"Usage: ls {synopsis}\n\n  {entry}  Colorize.\n"
     assert [p.spellings for p in docopter.parse(doc).positionals] == [["FILE"]]
-    assert inputs(doc) == [("--color", "", False, "Colorize.")]
+    assert inputs(doc) == [(flag, "", False, "Colorize.")]
 
 
 @pytest.mark.parametrize(
@@ -936,6 +957,12 @@ def test_an_optional_attached_value_in_the_synopsis_is_no_positional(
         ("-C[num] pattern", "", [["num"], ["pattern"]], [("-C", False)]),
         # `-p` takes `-C` as its value, so the group is no value of `-C`.
         ("-p -C[N] FILE", "-p P  Pick.", [["N"], ["FILE"]], [("-p", True)]),
+        # One of several alternatives would take the placeholder after them.
+        ("(-C[num] | -D) <x>", "", [["num"], ["<x>"]], [("-C", False), ("-D", False)]),
+        # The group of a flag of several letters belongs to a value.
+        ("[-kPOS1[,POS2]] FILE", "-k POS  Key.", [[",POS2"], ["FILE"]], [("-k", True)]),
+        # A repetition after the group would repeat the switch instead.
+        ("-C[num]... FILE", "", [["num"], ["FILE"]], [("-C", False)]),
     ],
 )
 def test_a_value_attached_to_a_short_flag_in_the_synopsis_is_no_positional(
@@ -1266,7 +1293,14 @@ def test_a_repetition_over_a_choice_of_options_repeats_each(synopsis, entry, cap
 
 @pytest.mark.parametrize(
     "synopsis",
-    ["[-v]...", "(-a <x> -b <y>)...", "-a <x> <y>...", "(-a <x> | -b <y> -c <z>)..."],
+    [
+        "[-v]...",
+        "(-a <x> -b <y>)...",
+        "-a <x> <y>...",
+        "(-a <x> | -b <y> -c <z>)...",
+        # A choice nested in another is not read.
+        "(-a <x> | (-b <y> | -c <z>))...",
+    ],
 )
 def test_a_repetition_that_is_no_options_list_makes_no_array(synopsis):
     """A repeated switch is a count, and a repeated pair repeats neither flag alone."""
@@ -1515,6 +1549,33 @@ def test_an_undocumented_single_dash_flag_is_one_flag_where_it_takes_a_value(
         for arg in task["cli_args"]
         if arg.option_flag
     ] == flags
+
+
+def test_a_repeated_undocumented_single_dash_flag_is_its_list():
+    """`-fq <FQ>...` repeats the flag, and the task passes `-fq`, not its stand-in."""
+    task = docopter.transform(*docopter.parse("Usage: tool -fq <FQ>... <in>\n"))
+    assert [
+        (arg.option_flag, arg.is_array, arg.flag_per_value)
+        for arg in task["cli_args"]
+        if arg.option_flag
+    ] == [("-fq", True, True)]
+
+
+def test_a_token_that_names_no_flag_takes_no_value_from_the_synopsis(capsys):
+    """gcc's `-W<warning>` names no flag to pass, so its placeholder stays."""
+    parsed = docopter.parse("Usage: tool -W<warning> <x>\n")
+    assert [p.spellings for p in parsed.positionals] == [["<x>"]]
+
+
+def test_a_value_attached_to_an_undocumented_single_dash_flag_is_read():
+    """The option made for `-fq` is annotated, as the rewrites read its `repeated`."""
+    doc = "Usage: tool -fq <FQ> -fq=A [A ...]\n"
+    task = docopter.transform(*docopter.parse(doc))
+    assert [
+        (arg.option_flag, arg.option_has_value)
+        for arg in task["cli_args"]
+        if arg.option_flag
+    ] == [("-fq", True)]
 
 
 def test_a_synopsis_that_does_not_parse_keeps_an_undocumented_single_dash_flag(capsys):

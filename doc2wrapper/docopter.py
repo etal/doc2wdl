@@ -77,8 +77,9 @@ _OPTIONAL_PART = re.compile(r"\[[A-Za-z0-9-]+\](?=[\w-])")
 _PLAIN_FLAG = re.compile(r"--?(?:[\w@](?:[\w.@+-]*[\w@+-])?|[%,?])")
 
 # A value a short flag writes optional and attached, as GNU date documents
-# `-I[FMT]` and git `-S[<keyid>]`.  `_without_optional_value` reads it.
-_ATTACHED_VALUE = re.compile(r"\[[^\[\]]*\]$")
+# `-I[FMT]` and git `-S[<keyid>]`, or, unclosed, what `Option.parse` keeps of ruby's
+# `-W[level=2]`, since it splits flags at `=`.  `_without_optional_value` reads it.
+_OPTIONAL_VALUE = re.compile(r"\[[^\[\]]*\]?$")
 
 # A bracketed group that opens a word and is written directly before the rest of
 # it, as git writes `--fixup [(amend|reword):]<commit>`: notation for an optional
@@ -221,7 +222,11 @@ def parse(doc):
     #               # `--color / --no-color`, or ""
     #   value_optional
     #               # likewise: whether the entry writes the flag both bare and
-    #               # with a value attached, as in `--check, --check=WORD`
+    #               # with a value attached, as in `--check, --check=WORD`, or
+    #               # brackets the value at the end of the flag, `--color[=WHEN]`
+    #   spelled     # set by `_single_dash_spellings` on an option it makes for
+    #               # a single-dash flag no entry documents, whose long spelling
+    #               # `_spelled_single_dash` removes once the synopsis is read
     #   repeats_flag
     #               # set here: whether the synopsis repeats the option itself
     #               # with `...`, as in `-e PATTERN ...`, so that its flag
@@ -548,7 +553,7 @@ def _without_optional_value(flag):
     """
     if flag.endswith("["):
         return flag[:-1]
-    return flag if flag.startswith("--") else _ATTACHED_VALUE.sub("", flag)
+    return flag if flag.startswith("--") else _OPTIONAL_VALUE.sub("", flag)
 
 
 def _passable_flag(flag):
@@ -772,8 +777,8 @@ def _repeated_options(pattern):
             }
             for branch in branches
         ]
-        if all(len(options) <= 1 for options in valued):
-            repeated.extend(dict.fromkeys(key for options in valued for key in options))
+        if all(len(keys) <= 1 for keys in valued):
+            repeated.extend(key for keys in valued for key in keys)
     return repeated
 
 
@@ -952,7 +957,7 @@ def _rewritable(tokens, spelling, argcount):
 
 
 def _single_dash_spellings(formal, options):
-    """Spell a documented single-dash flag of several letters so `parse_long` reads it.
+    """Spell a single-dash flag of several letters so that `parse_long` reads it.
 
     `parse_shorts` reads every token of one dash as a stack of one-letter flags, so
     bedtools getfasta's ``-fi <fasta> -bed <bed/gff/vcf>``, whose options block
@@ -1003,7 +1008,7 @@ def _single_dash_spellings(formal, options):
         entries[index].long = respelled(short)
     for short in _undocumented_single_dash(tokens, options):
         stand_in = _undocumented(docopt.Option(short, respelled(short), 1))
-        stand_in.spelled = short
+        stand_in.spelled = True
         entries.append(stand_in)
     if not spellings:
         return formal, options
@@ -1039,13 +1044,12 @@ def _undocumented_single_dash(tokens, options):
     argument count 1, so the rewrite cannot stop the synopsis from parsing: the
     value taken is a token that would otherwise be a positional.
     """
-    documented = {flag for opt in options for flag in (opt.short, opt.long) if flag}
+    documented = {opt.short for opt in options if opt.short}
     valued = {opt.short for opt in options if opt.short and opt.argcount}
+    stacks = set(_stacks(tokens))
     followed = {}
     for token, after in zip(tokens, [*tokens[1:], ""]):
-        if token.startswith("--") or not token.startswith("-") or len(token) < 3:
-            continue
-        if "=" not in token:
+        if token in stacks and "=" not in token:
             followed[token] = followed.get(token, True) and _is_placeholder(after)
     return [
         token
@@ -1059,7 +1063,7 @@ def _undocumented_single_dash(tokens, options):
 
 
 def _spelled_single_dash(options):
-    """Give back the single-dash spelling of each flag `_single_dash_spellings` made.
+    """Remove the long spelling of each flag `_single_dash_spellings` made up.
 
     Such a flag is read through a long spelling, which `parse_long` matches where
     `parse_shorts` would read a stack, and is passed as the single-dash flag the
@@ -1068,9 +1072,8 @@ def _spelled_single_dash(options):
     failed reading are what a degraded record declares.
     """
     for option in options:
-        spelled = getattr(option, "spelled", None)
-        if spelled:
-            option.short, option.long = spelled, None
+        if getattr(option, "spelled", False):
+            option.long = None
 
 
 def _synopsis_valued_options(formal, options):
@@ -1092,7 +1095,12 @@ def _synopsis_valued_options(formal, options):
     it.  A flag whose spelling matches a documented option only once the notation
     that `_passable_flag` removes is removed, as git's synopsis names ``--trailer``
     and its entry ``--[no-]trailer <trailer>``, takes a value only where that
-    option does, since `transform` passes the flag from the documented option.
+    option's argument count says it does, since `transform` passes the flag from
+    the documented option.  An entry whose value is optional, as
+    ``--color[=WHEN]``, keeps the argument count of its attached form, since a
+    synopsis writing ``--color <x> --color=Z`` would otherwise register a switch
+    at the first and reject the value at the second; the documented switch then
+    wins in `transform`, and ``<x>`` reaches no input.
     """
     tokens = _tokens(formal)
     declared, twin_argcount = set(), {}
@@ -1317,22 +1325,27 @@ def _without_attached_shorts(formal, options):
     The group is left as written where an option reads its ``[`` as its value,
     for `_without_value_brackets` to read on the retry, as git documents ``-u``
     and ``-S`` with a value; where an option reads the flag itself as its value,
-    as in ``-p -C[N]``; and where a placeholder or a lowercase word follows it,
-    since `_flags_before_placeholders` would read that token as the value of the
-    bare flag, so ``-C[num] pattern`` would pass the pattern to ``-C``.  The group
-    is removed whole, so every other bracket stays matched, as
-    `_without_value_repeats` argues, and no option takes a token it did not take
-    before.  The text is returned unchanged where no group is removed.
+    as in ``-p -C[N]``; where a placeholder or a lowercase word follows it, since
+    `_flags_before_placeholders` would read that token as the value of the bare
+    flag, so ``-C[num] pattern`` would pass the pattern to ``-C``; where the flag
+    is one of several alternatives, since `_distributed_values` would give it the
+    placeholder written after them, so ``(-C[num] | -D) <x>`` would lose ``<x>``;
+    and where a repetition follows, as in ``-C[num]...``, which would then repeat
+    the switch rather than the value.  The group is removed whole, so every other
+    bracket stays matched, as `_without_value_repeats` argues.  The text is
+    returned unchanged where no group is removed.
     """
     tokens = _tokens(formal)
     taken = _value_indices(tokens, options)
 
     def without(match):
         flag = len(_tokens(formal[: match.start()]))
-        after = _tokens(formal[match.end() :])[:1]
+        after = _tokens(formal[match.end() :])[:1] or [""]
         if not taken.isdisjoint((flag, flag + 1)):
             return match.group()
-        if after and (_is_placeholder(after[0]) or _is_command_word(after[0])):
+        if _is_placeholder(after[0]) or _is_command_word(after[0]):
+            return match.group()
+        if tokens[flag - 1 : flag] == ["|"] or after[0] in ("|", "..."):
             return match.group()
         return match.group(1)
 
@@ -1672,7 +1685,9 @@ def _entry_spellings(flags):
     bare = {d for d in declarations if _flag_name(d) == d}
     attached = {_flag_name(d) for d in declarations if "=" in d.split()[0]}
     kept, longs = declarations, _long_flags(declarations)
-    if not negations and len(longs) == 2 and longs[1] == "--no-" + longs[0][2:]:
+    # The negation of `--color[=WHEN]` is `--no-color`.
+    name = _without_optional_value(longs[0]) if longs else ""
+    if not negations and len(longs) == 2 and longs[1] == "--no-" + name[2:]:
         negations = [d for d in declarations if _flag_name(d) == longs[1]]
         kept = [d for d in declarations if _flag_name(d) != longs[1]]
         longs = longs[:1]
