@@ -1622,17 +1622,18 @@ def _documented_options(doc, synopsis):
     for entry, description in _option_entries(doc, synopsis):
         flags, gap, text = entry[0].partition("  ")
         flags = _FLAG_REPETITION.sub(r"\1", _FLAG_ALTERNATIVE.sub(r"\1, ", flags))
-        flags, others, first_long, false_flag, value_optional = _entry_spellings(flags)
+        spellings = _entry_spellings(flags)
+        flags = spellings.text
         option = docopt.Option.parse("\n".join([flags + gap + text, *entry[1:]]))
-        option.other_spellings = others
-        option.first_long = first_long
-        option.false_flag = false_flag
+        option.other_spellings = spellings.other_spellings
+        option.first_long = spellings.first_long
+        option.false_flag = spellings.false_flag
         # A value written optional and attached to the flag the option carries, as
         # GNU ls documents `--color[=WHEN]` and GNU date `-I[FMT]`, says what a bare
         # and an attached declaration say.  Only the carried flag is read: ruby's
         # `-Eex[:in], --encoding=ex[:in]` brackets an optional part of a required
         # value, and the long flag it carries shows the value required.
-        option.value_optional = value_optional or (
+        option.value_optional = spellings.value_optional or (
             option.name != _without_optional_value(option.name)
         )
         option.description = _joined(description)
@@ -1648,13 +1649,23 @@ def _documented_options(doc, synopsis):
     return options
 
 
-def _entry_spellings(flags):
-    """Read an entry's flags as one option.
+class _Spellings(NamedTuple):
+    """What `_entry_spellings` reads from an entry's flags."""
 
-    Returns the flag text to give `Option.parse`, the long flags the option does
-    not carry, the first long flag it writes other than a flag for false or ``""``,
-    its flag for false or ``""``, and whether one flag is written both bare and with
-    a value attached.
+    #: The flag text to give `Option.parse`.
+    text: str
+    #: The long flags the option does not carry.
+    other_spellings: tuple[str, ...] = ()
+    #: The first long flag the entry writes other than a flag for false, or ``""``.
+    first_long: str = ""
+    #: The option's flag for false, or ``""``.
+    false_flag: str = ""
+    #: Whether one flag is written both bare and with a value attached.
+    value_optional: bool = False
+
+
+def _entry_spellings(flags):
+    """Read an entry's flags as one option and return a `_Spellings`.
 
     `Option.parse` keeps the last long flag an entry writes and gives the option a
     value where any of its flags is written with one, so three shapes are misread.
@@ -1686,7 +1697,7 @@ def _entry_spellings(flags):
     declarations = _declarations(sides[0])
     negations = _declarations(sides[1]) if len(sides) > 1 else []
     if declarations is None or negations is None:
-        return flags, (), "", "", False
+        return _Spellings(flags)
     # A declaration that is its flag alone, with no placeholder and no `=`, is bare.
     bare = {d for d in declarations if _flag_name(d) == d}
     attached = {_flag_name(d) for d in declarations if "=" in d.split()[0]}
@@ -1702,10 +1713,13 @@ def _entry_spellings(flags):
     others = tuple(
         flag for flag in _long_flags(declarations + negations) if flag not in carried
     )
-    text = ", ".join(kept) if negations else flags
-    first = longs[0] if longs else ""
-    false_flag = false_flags[-1] if false_flags else ""
-    return text, others, first, false_flag, bool(bare & attached)
+    return _Spellings(
+        text=", ".join(kept) if negations else flags,
+        other_spellings=others,
+        first_long=longs[0] if longs else "",
+        false_flag=false_flags[-1] if false_flags else "",
+        value_optional=bool(bare & attached),
+    )
 
 
 def _declarations(flags):
