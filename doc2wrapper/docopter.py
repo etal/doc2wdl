@@ -545,15 +545,16 @@ def _without_optional_value(flag):
     An entry writes such a value in brackets at the end of the flag, as GNU ls
     documents ``--color[=WHEN]`` and GNU date ``-I[FMT]``.  `Option.parse` splits
     an entry's flags at ``=``, so what it stores of the long form is the name with
-    a trailing ``[``, which nothing else writes; a short flag attaches its value
-    with no ``=``, so the group is stored whole.  A group holding no ``=`` after a
-    long flag is therefore no value: ruby's ``--jit-[option]`` names an optional
-    part of the name, which `_OPTIONAL_PART` reads only where more of the name
-    follows it, and ``--jit-`` is no flag.
+    a trailing ``[``, which nothing else writes.  A short flag usually attaches its
+    value with no ``=``, so the group is stored whole, but ruby's ``-W[level=2]``
+    is split too, leaving ``-W[level``, so the closing bracket is optional.  A
+    group holding no ``=`` after a long flag is therefore no value: ruby's
+    ``--jit-[option]`` names an optional part of the name, which `_OPTIONAL_PART`
+    reads only where more of the name follows it, and ``--jit-`` is no flag.
     """
-    if flag.endswith("["):
-        return flag[:-1]
-    return flag if flag.startswith("--") else _OPTIONAL_VALUE.sub("", flag)
+    if flag.startswith("--"):
+        return flag.removesuffix("[")
+    return _OPTIONAL_VALUE.sub("", flag)
 
 
 def _passable_flag(flag):
@@ -904,7 +905,12 @@ def _carried_spellings(formal, options):
     ``[--log-dir]`` is never taken as a value.  A spelling that another option
     carries, or that two entries write, is left as written, and so is one whose
     carried spelling two entries declare, which `parse_long` would then reject as
-    ambiguous.  The text is returned unchanged where no token is rewritten.
+    ambiguous, and so is one whose carried spelling holds a symbol `parse_pattern`
+    pads into a token of its own, as ``--color[`` does, which `Option.parse` keeps
+    of ``--color[=WHEN]``.  Such a spelling is read as a flag of its own, so beside
+    ``--color[=WHEN], --no-color`` a synopsis's ``--no-color FILE`` declares a
+    second input passing ``--no-color`` and taking ``FILE``.  The text is returned
+    unchanged where no token is rewritten.
     """
     writers = {}
     for option in options:
@@ -916,6 +922,7 @@ def _carried_spellings(formal, options):
         for spelling, owners in writers.items()
         if len(owners) == 1
         and owners[0].long
+        and len(_tokens(owners[0].long)) == 1
         and declared[owners[0].long] == 1
         and spelling not in declared
     }
@@ -1327,25 +1334,24 @@ def _without_attached_shorts(formal, options):
     and ``-S`` with a value; where an option reads the flag itself as its value,
     as in ``-p -C[N]``; where a placeholder or a lowercase word follows it, since
     `_flags_before_placeholders` would read that token as the value of the bare
-    flag, so ``-C[num] pattern`` would pass the pattern to ``-C``; where the flag
-    is one of several alternatives, since `_distributed_values` would give it the
-    placeholder written after them, so ``(-C[num] | -D) <x>`` would lose ``<x>``;
-    and where a repetition follows, as in ``-C[num]...``, which would then repeat
-    the switch rather than the value.  The group is removed whole, so every other
-    bracket stays matched, as `_without_value_repeats` argues.  The text is
-    returned unchanged where no group is removed.
+    flag, so ``-C[num] pattern`` would pass the pattern to ``-C``; and where the
+    flag is one of several alternatives, since `_distributed_values` would give it
+    the placeholder written after them, so ``(-C[num] | -D) <x>`` would lose
+    ``<x>``.  The group is removed whole, so every other bracket stays matched, as
+    `_without_value_repeats` argues.  The text is returned unchanged where no
+    group is removed.
     """
     tokens = _tokens(formal)
     taken = _value_indices(tokens, options)
 
     def without(match):
         flag = len(_tokens(formal[: match.start()]))
-        after = _tokens(formal[match.end() :])[:1] or [""]
+        after = (_tokens(formal[match.end() :]) + [""])[0]
         if not taken.isdisjoint((flag, flag + 1)):
             return match.group()
-        if _is_placeholder(after[0]) or _is_command_word(after[0]):
+        if _is_placeholder(after) or _is_command_word(after):
             return match.group()
-        if tokens[flag - 1 : flag] == ["|"] or after[0] in ("|", "..."):
+        if tokens[flag - 1 : flag] == ["|"] or after == "|":
             return match.group()
         return match.group(1)
 

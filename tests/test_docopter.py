@@ -889,6 +889,52 @@ def test_the_negation_of_a_flag_with_an_optional_value_is_its_flag_for_false():
     assert inputs(doc) == [("--color", "--no-color", False, "Colorize.")]
 
 
+def test_a_synopsis_spacing_the_value_of_an_optional_value_flag_loses_it(capsys):
+    """`--color <x>` registers a flag of its own, which the described entry outranks.
+
+    The flag the synopsis registers takes `<x>`, as an undocumented flag before a
+    placeholder does, and is set aside for the described entry, so `<x>` reaches
+    no input.
+    """
+    doc = "Usage: ls --color <x>\n\n  --color[=WHEN]  Colorize.\n"
+    assert [p.spellings for p in docopter.parse(doc).positionals] == []
+    assert inputs(doc) == [("--color", "", False, "Colorize.")]
+    assert "which another option also passes" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "synopsis, entry, described",
+    [
+        (
+            "--no-color FILE OUT",
+            "--color[=WHEN], --no-color",
+            ("--color", "--no-color"),
+        ),
+        ("--isodate FILE OUT", "--isodate, --iso-8601[=FMT]", ("--iso-8601", "")),
+    ],
+)
+def test_a_spelling_is_not_rewritten_to_a_flag_holding_notation(
+    synopsis, entry, described, capsys
+):
+    """A carried flag such as `--color[`, kept of `--color[=WHEN]`, names no token.
+
+    The spelling is then read as a flag of its own, which takes the placeholder.
+    """
+    doc = f"Usage: ls {synopsis}\n\n  {entry}  Something.\n"
+    assert [p.spellings for p in docopter.parse(doc).positionals] == [["OUT"]]
+    spelled = synopsis.split()[0]
+    assert inputs(doc) == [(*described, False, "Something."), (spelled, "", True, "")]
+    assert capsys.readouterr().err == ""
+
+
+def test_a_spelling_is_not_rewritten_to_a_flag_holding_a_closing_bracket(capsys):
+    """`--iso8601]`, which `parse_pattern` would split, is no rewrite target either."""
+    doc = "Usage: ls --isodate FILE OUT\n\n  --isodate, --iso8601]  Something.\n"
+    assert [p.spellings for p in docopter.parse(doc).positionals] == [["OUT"]]
+    assert inputs(doc) == [("--isodate", "", True, "")]
+    assert "names no single flag" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize(
     "synopsis, entry, flag",
     [
@@ -959,10 +1005,10 @@ def test_an_optional_attached_value_in_the_synopsis_is_no_positional(
         ("-p -C[N] FILE", "-p P  Pick.", [["N"], ["FILE"]], [("-p", True)]),
         # One of several alternatives would take the placeholder after them.
         ("(-C[num] | -D) <x>", "", [["num"], ["<x>"]], [("-C", False), ("-D", False)]),
-        # The group of a flag of several letters belongs to a value.
+        # The group of a flag of several letters is left as written.
         ("[-kPOS1[,POS2]] FILE", "-k POS  Key.", [[",POS2"], ["FILE"]], [("-k", True)]),
-        # A repetition after the group would repeat the switch instead.
-        ("-C[num]... FILE", "", [["num"], ["FILE"]], [("-C", False)]),
+        # Before a repetition, the group goes and the switch is not repeated.
+        ("-C[num]... FILE", "", [["FILE"]], [("-C", False)]),
     ],
 )
 def test_a_value_attached_to_a_short_flag_in_the_synopsis_is_no_positional(
@@ -1564,11 +1610,12 @@ def test_a_repeated_undocumented_single_dash_flag_is_its_list():
 def test_a_token_that_names_no_flag_takes_no_value_from_the_synopsis(capsys):
     """gcc's `-W<warning>` names no flag to pass, so its placeholder stays."""
     parsed = docopter.parse("Usage: tool -W<warning> <x>\n")
+    assert capsys.readouterr().err == ""
     assert [p.spellings for p in parsed.positionals] == [["<x>"]]
 
 
 def test_a_value_attached_to_an_undocumented_single_dash_flag_is_read():
-    """The option made for `-fq` is annotated, as the rewrites read its `repeated`."""
+    """`-fq=A` in the synopsis is read as `-fq` taking a value."""
     doc = "Usage: tool -fq <FQ> -fq=A [A ...]\n"
     task = docopter.transform(*docopter.parse(doc))
     assert [
