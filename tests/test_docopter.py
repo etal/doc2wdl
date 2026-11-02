@@ -848,6 +848,72 @@ def test_a_synopsis_attaching_a_value_to_a_bare_and_attached_flag_still_parses(
     assert capsys.readouterr().err == ""
 
 
+@pytest.mark.parametrize(
+    ("synopsis", "entry", "flag"),
+    [
+        ("[--check] FILE", "-c, --check, --check=WORD", "--check"),
+        ("[-c] FILE", "-c, --check, --check=WORD", "--check"),
+        ("[-j] FILE", "-j, --jobs[=N]", "--jobs"),
+    ],
+)
+def test_a_synopsis_writing_a_bare_and_attached_flag_bare_parses(
+    synopsis, entry, flag, capsys
+):
+    """The bare flag is the switch, so it does not take the bracket as its value."""
+    doc = f"Usage: prog {synopsis}\n\n  {entry}  Check.\n"
+    parsed = docopter.parse(doc)
+    assert [p.spellings for p in parsed.positionals] == [["FILE"]]
+    assert inputs(doc) == [(flag, "", False, "Check.")]
+    assert capsys.readouterr().err == ""
+
+
+def test_a_bare_reading_also_reads_values_written_after_alternative_flags(capsys):
+    """`(-x | -X) <v>` needs D43's distribution, and `[--check]` the lowered count."""
+    doc = (
+        "Usage: prog [(-x | -X) <v>] [--check] FILE\n\n"
+        "  -x VAL                     Ex.\n"
+        "  -X VAL                     Big ex.\n"
+        "  -c, --check, --check=WORD  Check.\n"
+    )
+    parsed = docopter.parse(doc)
+    assert [p.spellings for p in parsed.positionals] == [["FILE"]]
+    assert capsys.readouterr().err == ""
+
+
+def test_a_bare_reading_does_not_displace_a_reading_that_parses(capsys):
+    """git's `-u[<mode>]` reads `<mode>` as the value `-u` takes, not as a positional.
+
+    The reading that lowers the argument count follows every other, so the reading
+    that gives `-u` the bracket and then reads `-u <mode>` keeps its place.
+    """
+    doc = (
+        "Usage: git commit [-u[<mode>]] <file>\n\n"
+        "  -u, --[no-]untracked-files[=<mode>]  Show untracked files.\n"
+    )
+    parsed = docopter.parse(doc)
+    assert [p.spellings for p in parsed.positionals] == [["<file>"]]
+    assert capsys.readouterr().err == ""
+
+
+def test_a_degraded_synopsis_declares_what_its_text_as_written_registers(capsys):
+    """No reading parses, and the options and the reason are the text as written's.
+
+    One argument count cannot both accept and reject a value, so the line fails
+    under every reading, but the bare reading fails earlier, before it meets
+    `--other`, and for a reason, `--check=W`, that the text as written does not have.
+    """
+    doc = (
+        "Usage: prog [--check=W] [-c] --other <x> FILE\n\n"
+        "  -c, --check, --check=WORD  Check.\n"
+    )
+    parsed = docopter.parse(doc)
+    assert parsed.positionals == []
+    assert [opt.long for opt in parsed.options] == ["--check", "--other"]
+    err = capsys.readouterr().err
+    assert "could not read positional arguments" in err
+    assert "unmatched '['" in err
+
+
 def test_a_flag_written_with_its_value_spaced_and_attached_takes_a_value():
     """`--file FILE, --file=FILE` writes no bare form, so its value is not optional."""
     doc = "Usage: make [options]\n\n  --file FILE, --file=FILE  Read FILE.\n"

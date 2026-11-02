@@ -645,6 +645,9 @@ def _read_command_line(printable, usage, options):
     `_distributed_values` distributes, then without them.  The first reading that
     parses is kept, so a usage line that parsed as written still parses.  A
     reading that does not parse is read once more as `_read_pattern` describes.
+    Each text, with and without the values it distributes, is read once more as
+    `_bare_optional_values` describes, after every other reading, so a usage line
+    that parses without those readings keeps its reading.
     With no tree to confirm them, the command words are those of the text alone.
     """
     words = _command_words(usage)
@@ -653,22 +656,27 @@ def _read_command_line(printable, usage, options):
     # The prefix is read first, since every later rewrite joins the tokens with
     # spaces and so loses the text that writes it directly before its value.
     prefixed = _without_value_prefixes(formal, options)
-    readings = []
+    readings, bare = [], []
     for text in dict.fromkeys([prefixed, formal]):
         text = _without_attached_shorts(text, options)
         text, entries = _single_dash_spellings(
             _carried_spellings(text, options), options
         )
         text = _without_value_repeats(text, entries)
-        distributed = _distributed_values(text, entries)
-        if distributed != text:
-            readings += _readings(distributed, entries)
-        readings += _readings(text, entries)
+        for shown in dict.fromkeys([_distributed_values(text, entries), text]):
+            readings += _readings(shown, entries)
+            bare += _bare_optional_values(shown, entries)
+    # A usage line that parses under no reading declares what the reading of the
+    # text as written registered, which is not the last reading tried, and reports
+    # why that reading failed.
+    written = readings[-1][1]
+    readings += bare
     for text, reading, switches in readings:
         try:
             pattern = _read_pattern(text, reading)
         except docopt.DocoptLanguageError as error:
-            why = error
+            if reading is written:
+                why = error
         else:
             break
     else:
@@ -677,8 +685,7 @@ def _read_command_line(printable, usage, options):
             why,
             file=sys.stderr,
         )
-        # What the last reading, the text as written, registered before it failed.
-        options[documented:] = reading[documented:]
+        options[documented:] = written[documented:]
         _spelled_single_dash(options[documented:])
         return " ".join(words), [], set()
     first = {}
@@ -829,6 +836,34 @@ def _readings(formal, entries):
         )
         for reading, chosen in readings
     ]
+
+
+def _bare_optional_values(formal, entries):
+    """The readings of `formal` with each option whose value is optional a switch.
+
+    An entry that writes its flag both bare and with a value attached, as GNU sort
+    writes ``-c, --check, --check=diagnose-first``, keeps the argument count of its
+    attached form, so that a synopsis writing ``--check=WORD`` parses.  A synopsis
+    that writes the flag bare gives `parse_long` or `parse_shorts` the next token
+    as its value, and where that token closes a group or separates alternatives,
+    the line does not parse: ``[--check] FILE`` leaves the ``[`` unmatched.  The
+    same holds for the short flag of an entry that brackets the value at the end
+    of its long flag, as ``-j, --jobs[=N]`` does.  These readings copy each such
+    option at argument count 0, the count of the switch `_takes_value` passes it
+    as, and are otherwise made as `_readings` makes them, so that the values the
+    synopsis shows are decided with the lowered count.  None are made where no
+    option's value is optional.
+
+    The documented options keep their argument count, so a task passes the flag
+    as `transform` decides whichever reading parses.
+    """
+    bare, found = list(entries), False
+    for index, option in enumerate(entries):
+        if option.argcount and option.value_optional:
+            bare[index] = copy.copy(option)
+            bare[index].argcount, bare[index].value = 0, False
+            found = True
+    return _readings(formal, bare) if found else []
 
 
 def _lead_commands(alternative):
