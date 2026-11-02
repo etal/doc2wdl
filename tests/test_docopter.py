@@ -1188,6 +1188,83 @@ Startup:
     ]
 
 
+# Option lines whose flags end one column short of the description column, which
+# `-a` states, as git log, node and samtools write them.
+ONE_SPACE_BEFORE_THE_COLUMN = """Usage: prog [options] FILE
+
+Options:
+  -a, --alpha FILE           Read FILE.
+  -R, --read-group-file FILE ...are in a read group listed in FILE
+       --[no-]decorate[=...] decorate options
+       --fast-and-quiet-mode Run quickly; see -H.
+     --inspect[=[host:]port] activate inspector on host:port and
+                             break at start of user script
+"""
+
+
+def test_a_description_one_space_after_the_flags_at_the_column_is_read():
+    """The text at the description column is the description, not the flags' value.
+
+    Read as flags, it gave `--fast-and-quiet-mode` a value and its `-H` the flag.
+    """
+    options = docopter.parse(ONE_SPACE_BEFORE_THE_COLUMN).options
+    assert [(o.short, o.long, o.argcount, o.description) for o in options[1:]] == [
+        ("-R", "--read-group-file", 1, "...are in a read group listed in FILE"),
+        (None, "--[no-]decorate[", 1, "decorate options"),
+        (None, "--fast-and-quiet-mode", 0, "Run quickly; see -H."),
+        (
+            None,
+            "--inspect[",
+            1,
+            "activate inspector on host:port and break at start of user script",
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("line", "usage", "flag"),
+    [
+        # The whole line is a list of declarations.
+        ("                    --method name", "[options]", "--method"),
+        # The text opens with a word in capitals, as argparse writes a metavar.
+        ("        --shadow-file SOURCE SHADOW", "[options]", "--shadow-file"),
+        ("           --jobs-per-worker N [N ...]", "[options]", "--jobs-per-worker"),
+        # The text opens with an angle-bracketed value, as java writes one.
+        ("               --module-path <module path>...", "[options]", "--module-path"),
+        # The text opens with a parenthesized value or with a number.
+        ("                      --pair (left right) x", "[options]", "--pair"),
+        ("                     --range 0 100", "[options]", "--range"),
+        # The column falls inside a bracket.
+        ("                --pair (left right) x", "[options]", "--pair"),
+        # The synopsis writes the two words together.
+        ("                  --copy src dst", "[--copy src dst]", "--copy"),
+    ],
+)
+def test_a_value_one_space_after_the_flags_at_the_column_stays_a_value(
+    line, usage, flag
+):
+    """An option line holding only flags and values describes the option below it."""
+    doc = (
+        f"Usage: prog {usage} FILE\n\nOptions:\n"
+        "  -a, --alpha FILE           Read FILE.\n"
+        f"{line}\n                             Method.\n"
+    )
+    [option] = docopter.parse(doc).options[1:]
+    assert (option.long, option.argcount, option.description) == (flag, 1, "Method.")
+
+
+@pytest.mark.parametrize("flags", ["-z --search-zip", "-z ,--search-zip"])
+def test_a_flag_one_space_after_the_flags_at_the_column_stays_a_flag(flags):
+    """Text at the column that opens with a hyphen or a comma continues the flags."""
+    doc = (
+        "Usage: prog [options] FILE\n\nOptions:\n"
+        "  -a, --alpha FILE           Read FILE.\n"
+        f"                          {flags} Search zip files.\n"
+    )
+    [option] = docopter.parse(doc).options[1:]
+    assert (option.short, option.long) == ("-z", "--search-zip")
+
+
 def test_an_option_documented_twice_keeps_each_description():
     """Each entry's description stays with the option it was written beside."""
     doc = "Usage: tool [options]\n\nBasic:\n  -v  Be loud.\n\nMore:\n  -v  Be louder.\n"

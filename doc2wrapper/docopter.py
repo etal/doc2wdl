@@ -130,6 +130,13 @@ _NOTATION = re.compile(r"[\[\](){}<>|]|\.\.\.|(?<!\S)-")
 # `{batch,target,...}`.  `_read_command_line` reads such a slot as no input.
 _CHOICE_GROUP = re.compile(r"\{[^{}]*\}")
 
+# A word that may be an option's value rather than the first word of its
+# description: one that opens with a bracket, a brace, a parenthesis, an angle
+# bracket, a colon or a digit, or is written in capitals, as argparse writes the
+# metavar `N`.  `_divided_at_column` reads no description from text it opens, so a
+# description that opens with the article `A` or with a number is not read either.
+_PLACEHOLDER_WORD = re.compile(r"[<\[{(:]|[A-Z][A-Z0-9_]*$|\d")
+
 
 class UsageNotFound(Exception):
     """The help text has no single ``usage:`` section to read a command line from."""
@@ -1639,8 +1646,9 @@ def _documented_options(doc, synopsis):
     `Option.parse` is given the text upstream's `parse_defaults` gave it, the option
     line from its first flag followed by the entry's later lines, joined by line
     breaks, so the flags, the argument count and a ``[default: ...]`` are read as
-    upstream reads them.  Only where an entry starts and ends differs, and two
-    spellings of flags, which `Option.parse` would read as one flag: the flags of
+    upstream reads them.  What differs is where an entry starts and ends; where
+    its flags end, as `_divided_at_column` describes; and two spellings of flags,
+    which `Option.parse` would read as one flag: the flags of
     ``-A|--accession`` are read as ``-A, --accession``, and ``--verbose...`` as
     ``--verbose``, which clap writes for a flag counted each time it is passed.
     Each option also records the placeholder its flags repeat, as argparse writes
@@ -1839,8 +1847,9 @@ def _option_entries(doc, synopsis, named=frozenset()):
     its option, so a section heading or an epilog at that depth is no part of it,
     and it runs across blank lines, since a ``[default: ...]`` may follow one.  Its
     description is the first paragraph: it starts after the first two spaces on the
-    option line, upstream's rule, so where one space separates the flags from the
-    text nothing on that line is description, and it ends at the first blank line.
+    option line, upstream's rule, or after one space where the text begins at the
+    description column, as `_divided_at_column` describes, and it ends at the first
+    blank line.
 
     Tabs are expanded first, as `_expanded` describes, since help text such as
     bedtools' indents its options block with a tab and separates each flag from
@@ -1854,7 +1863,9 @@ def _option_entries(doc, synopsis, named=frozenset()):
     ``FORMAT controls the output.  Interpreted sequences are:`` does.
     """
     entry, lines, describing, entry_indent, column = None, [], False, 0, None
-    for number, line in enumerate(_expanded(doc).split("\n")):
+    expanded = _expanded(doc).split("\n")
+    usage = "\n".join(expanded[number] for number in synopsis)
+    for number, line in enumerate(expanded):
         head = line.lstrip(" ")
         indent = len(line) - len(head)
         names = named and _names_positional(head, named)
@@ -1877,6 +1888,8 @@ def _option_entries(doc, synopsis, named=frozenset()):
             yield entry, lines
             entry = None
         if starts and (names or head[0] == "-"):
+            if head[0] == "-":
+                head = _divided_at_column(line, indent, column, usage)
             entry, lines, describing, entry_indent = [head], [], True, indent
             description = head.partition("  ")[2].lstrip()
             if description:
@@ -1885,6 +1898,59 @@ def _option_entries(doc, synopsis, named=frozenset()):
                     column = len(line) - len(description)
     if entry is not None:
         yield entry, lines
+
+
+def _divided_at_column(line, indent, column, usage):
+    """This option line from its flag on, its flags ended at the description column.
+
+    An option line whose flags end one column short of the description column
+    separates them from its description by one space, which upstream's rule,
+    ending the flags at two spaces, reads as part of the flags: git log writes
+    ``--[no-]decorate[=...] decorate options``, node
+    ``--inspect-brk[=[host:]port] activate inspector on host:port and``, and
+    samtools ``-R, --read-group-file FILE ...are in a read group listed in FILE``.
+    The description was then lost, its words gave the option a value, and a word
+    opening with a hyphen became its flag, so that clang's
+    ``-fshow-skipped-includes Show skipped includes in -H output.`` was read as the
+    option ``-H``.  Where exactly one space precedes text that begins at the
+    description column, the space is doubled, which ends the flags there for
+    `_documented_options` and for `Option.parse`, both of which end them at two
+    spaces, and leaves the description column where it was.
+
+    The text at the column may instead be the value the entry writes, since a
+    formatter that places the description on the next line leaves the option line
+    to the flags and their values, whatever their width.  The line is therefore
+    returned as written where the whole line is a list of declarations, as
+    argparse writes ``--antitarget-avg-size ANTITARGET_AVG_SIZE``; where a bracket
+    of the flags is unclosed, as in pylint's ``--spelling-dict <dict name>``; where
+    the text opens with a word `_PLACEHOLDER_WORD` matches, as mypy's
+    ``--shadow-file SOURCE_FILE SHADOW_FILE``, argparse's ``--jobs N [N ...]`` and
+    java's ``--module-path <module path>...`` do when wrapped; and where the
+    synopsis writes the last word of the flags followed by the first word of the
+    text, as it writes ``--copy src dst`` for a value of two lowercase words.  Text
+    that opens with a hyphen or a comma continues the flags.  Where two spaces end
+    the flags anywhere on the line, upstream's rule already applies.
+    """
+    head = line[indent:]
+    if (
+        column is None
+        or "  " in head
+        or not indent + 1 < column < len(line.rstrip())
+        or line[column - 1] != " "
+    ):
+        return head
+    flags, text = line[indent : column - 1], line[column:]
+    first, last = text.split()[0], flags.split()[-1]
+    together = rf"(?<![\w-]){re.escape(last)}\s+{re.escape(first)}"
+    if (
+        text.startswith(("-", ","))
+        or any(flags.count(a) != flags.count(b) for a, b in ("<>", "[]", "{}", "()"))
+        or _PLACEHOLDER_WORD.match(first)
+        or _declarations(head) is not None
+        or re.search(together, usage)
+    ):
+        return head
+    return flags + "  " + text
 
 
 def _names_positional(line, named):
